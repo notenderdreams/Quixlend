@@ -58,5 +58,61 @@ class FetchAll(unittest.TestCase):
                 download.fetch_all(plan(server, self.dest), workers=1)
 
 
+class Chunked(unittest.TestCase):
+    """Big files are fetched as parallel byte-range chunks (CHUNK shrunk so the test files count as big)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dest = Path(self.tmp.name)
+        self.chunk, download.CHUNK = download.CHUNK, 64_000
+
+    def tearDown(self):
+        download.CHUNK = self.chunk
+        self.tmp.cleanup()
+
+    def test_ranged_download_is_byte_identical_and_spread_over_connections(self):
+        with TestServer(FILES) as server:
+            server.delay = 0.05
+            download.fetch_all(plan(server, self.dest))
+            big = server.requests("a/big.bin")
+        for p, data in FILES.items():
+            self.assertEqual((self.dest / p).read_bytes(), data)
+        self.assertEqual(len(big), 5)  # 300_000 bytes in 64_000-byte chunks
+        self.assertTrue(all(r["range"] for r in big))
+        self.assertGreater(len({r["conn"] for r in big}), 1)
+
+    def test_biggest_file_is_requested_first(self):
+        with TestServer(FILES) as server:
+            download.fetch_all(plan(server, self.dest), workers=1)
+            self.assertEqual(server.requests()[0]["path"], "a/big.bin")
+
+    def test_small_files_are_not_split(self):
+        with TestServer(FILES) as server:
+            download.fetch_all(plan(server, self.dest))
+            small = server.requests("a/small.bin")
+        self.assertEqual([r["range"] for r in small], [None])
+
+    def test_server_without_ranges_still_produces_correct_files(self):
+        with TestServer(FILES, ranges=False) as server:
+            download.fetch_all(plan(server, self.dest))
+            self.assertEqual(len(server.requests("a/big.bin")), 1)
+        for p, data in FILES.items():
+            self.assertEqual((self.dest / p).read_bytes(), data)
+
+    def test_progress_is_monotonic_and_ends_at_total(self):
+        seen = []
+        with TestServer(FILES) as server:
+            download.fetch_all(plan(server, self.dest), lambda done, total: seen.append(done))
+        self.assertEqual(seen, sorted(seen))
+        self.assertEqual(seen[-1], sum(map(len, FILES.values())))
+
+    def test_wrong_size_fails_without_a_finished_file(self):
+        with TestServer(FILES) as server:
+            bad = [(url, path, size + 1) for url, path, size in plan(server, self.dest)]
+            with self.assertRaises(download.DownloadError):
+                download.fetch_all(bad)
+        self.assertFalse((self.dest / "a/big.bin").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
