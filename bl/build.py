@@ -160,7 +160,7 @@ def catalog_id(library, asset_type):
 
 
 def set_preview(datablock, folder):
-    src = next((p for p in sorted(folder.glob("*_Preview.*"))), None)
+    src = next(iter(sorted(folder.glob("_Thumb.jpg"))), None) or next(iter(sorted(folder.glob("*_Preview.*"))), None)
     if not src:
         return
     img = bpy.data.images.load(str(src))

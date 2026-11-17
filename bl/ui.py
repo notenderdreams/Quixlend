@@ -1,6 +1,7 @@
 """Preferences, operators and the 3D Viewport sidebar panel."""
 import json
 import math
+import shutil
 import subprocess
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -179,6 +180,9 @@ class QUIXLEND_OT_download(bpy.types.Operator):
             res = client.request_download(api.build_payload(asset, resolution))
             dest = download.asset_dir(root, asset)
             download.fetch_all(download.plan(res, dest), progress)
+            thumb = HOME / "thumbs" / f"{asset_id}.jpg"  # Quixel's own catalog thumbnail
+            if thumb.exists():
+                shutil.copyfile(thumb, dest / "_Thumb.jpg")
             proc = subprocess.run([blender, "-b", "--factory-startup", "--python", BUILD_SCRIPT,
                                    "--", str(dest), str(root)], capture_output=True, text=True)
             if "QUIXLEND_BUILT" not in proc.stdout:
