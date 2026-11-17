@@ -35,86 +35,9 @@ def find_maps(folder, lod=None):
     return {role: path for role, (_, path) in best.items()}
 
 
-def build_material(name, maps, displace):
-    mat = bpy.data.materials.new(name)
-    nodes, links = mat.node_tree.nodes, mat.node_tree.links
-    bsdf = next(n for n in nodes if n.bl_idname == "ShaderNodeBsdfPrincipled")
-    out = next(n for n in nodes if n.bl_idname == "ShaderNodeOutputMaterial")
-    coord = nodes.new("ShaderNodeTexCoord")
-    mapping = nodes.new("ShaderNodeMapping")
-    coord.location, mapping.location = (-1300, 0), (-1100, 0)
-    links.new(coord.outputs["UV"], mapping.inputs["Vector"])
-    row = [0]
-
-    def tex(role, color=False):
-        if role not in maps:
-            return None
-        node = nodes.new("ShaderNodeTexImage")
-        node.image = bpy.data.images.load(str(maps[role]))
-        node.image.colorspace_settings.name = "sRGB" if color else "Non-Color"
-        node.label = role
-        node.location = (-800, 300 - 280 * row[0])
-        row[0] += 1
-        links.new(mapping.outputs["Vector"], node.inputs["Vector"])
-        return node
-
-    albedo, ao = tex("albedo", color=True), tex("ao")
-    if albedo and ao:
-        mix = nodes.new("ShaderNodeMix")
-        mix.data_type, mix.blend_type = "RGBA", "MULTIPLY"
-        mix.inputs["Factor"].default_value = 1.0
-        mix.location = (-400, 300)
-        links.new(albedo.outputs["Color"], mix.inputs["A"])
-        links.new(ao.outputs["Color"], mix.inputs["B"])
-        links.new(mix.outputs["Result"], bsdf.inputs["Base Color"])
-    elif albedo:
-        links.new(albedo.outputs["Color"], bsdf.inputs["Base Color"])
-    for role, socket in (("roughness", "Roughness"), ("metalness", "Metallic")):
-        node = tex(role)
-        if node:
-            links.new(node.outputs["Color"], bsdf.inputs[socket])
-    opacity, translucency = tex("opacity"), tex("translucency", color=True)
-    if translucency:
-        # Thin leaves: light passing through, then cut out by opacity (alpha on the BSDF
-        # alone would leave the translucent lobe visible in the holes).
-        trans, mix = nodes.new("ShaderNodeBsdfTranslucent"), nodes.new("ShaderNodeMixShader")
-        trans.location, mix.location = (0, -300), (300, 0)
-        mix.inputs["Fac"].default_value = 0.35
-        links.new(translucency.outputs["Color"], trans.inputs["Color"])
-        links.new(bsdf.outputs["BSDF"], mix.inputs[1])
-        links.new(trans.outputs["BSDF"], mix.inputs[2])
-        surface = mix.outputs["Shader"]
-        if opacity:
-            clear, cut = nodes.new("ShaderNodeBsdfTransparent"), nodes.new("ShaderNodeMixShader")
-            clear.location, cut.location = (300, -300), (550, 0)
-            links.new(opacity.outputs["Color"], cut.inputs["Fac"])
-            links.new(clear.outputs["BSDF"], cut.inputs[1])
-            links.new(surface, cut.inputs[2])
-            surface = cut.outputs["Shader"]
-        out.location = (800, 0)
-        links.new(surface, out.inputs["Surface"])
-    elif opacity:
-        links.new(opacity.outputs["Color"], bsdf.inputs["Alpha"])
-    normal = tex("normal")
-    if normal:
-        nmap = nodes.new("ShaderNodeNormalMap")
-        nmap.location = (-400, -300)
-        links.new(normal.outputs["Color"], nmap.inputs["Color"])
-        links.new(nmap.outputs["Normal"], bsdf.inputs["Normal"])
-    height = tex("displacement") if displace else None
-    if height:
-        disp = nodes.new("ShaderNodeDisplacement")
-        disp.location = (-400, -600)
-        disp.inputs["Scale"].default_value = 0.05
-        links.new(height.outputs["Color"], disp.inputs["Height"])
-        links.new(disp.outputs["Displacement"], out.inputs["Displacement"])
-        mat.displacement_method = "BOTH"
-    return mat
-
-
-def build_group_material(name, maps):
-    """Object material: the texture work lives in a node group named like the material, exposing the tweaks
-    (tint, hue, saturation, brightness, contrast, roughness, normal strength); the BSDF stays outside."""
+def build_group_material(name, maps, displace=False):
+    """Material for any asset type: the texture work lives in a node group named like the material, exposing the tweaks
+    (tint, hue, saturation, brightness, contrast, roughness, normal strength, displacement scale); the BSDF stays outside."""
     mat = bpy.data.materials.new(name)
     nodes, links = mat.node_tree.nodes, mat.node_tree.links
     bsdf = next(n for n in nodes if n.bl_idname == "ShaderNodeBsdfPrincipled")
@@ -158,6 +81,8 @@ def build_group_material(name, maps):
     color_panel = face.new_panel("Color") if "albedo" in maps else None
     surface_panel = face.new_panel("Surface") if "roughness" in maps else None
     normal_panel = face.new_panel("Normal") if "normal" in maps else None
+    displace = displace and "displacement" in maps
+    displace_panel = face.new_panel("Displacement") if displace else None
     row = [0]
 
     def tex(role, color=False):
@@ -238,6 +163,13 @@ def build_group_material(name, maps):
         gl.new(normal.outputs["Color"], nmap.inputs["Color"])
         gl.new(gi.outputs["Normal Strength"], nmap.inputs["Strength"])
         emit("Normal", "NodeSocketVector", nmap.outputs["Normal"])
+    if displace:
+        height = tex("displacement")
+        add("Displacement Scale", "NodeSocketFloat", panel=displace_panel, default=0.05, lo=0.0, hi=0.5)
+        disp = node("ShaderNodeDisplacement", -400, -700)
+        gl.new(height.outputs["Color"], disp.inputs["Height"])
+        gl.new(gi.outputs["Displacement Scale"], disp.inputs["Scale"])
+        emit("Displacement", "NodeSocketVector", disp.outputs["Displacement"])
 
     group = nodes.new("ShaderNodeGroup")
     group.node_tree, group.name, group.label, group.location = ng, name, name, (-330, 0)
@@ -269,6 +201,9 @@ def build_group_material(name, maps):
         links.new(surface, out.inputs["Surface"])
     elif "Alpha" in group.outputs:
         links.new(group.outputs["Alpha"], bsdf.inputs["Alpha"])
+    if "Displacement" in group.outputs:
+        links.new(group.outputs["Displacement"], out.inputs["Displacement"])
+        mat.displacement_method = "BOTH"
     return mat
 
 
@@ -360,7 +295,7 @@ def build(folder, library):
         brush.texture = texture
         assets = [brush]
     else:
-        assets = [build_material(name, maps, displace=asset_type == "surface")]
+        assets = [build_group_material(name, maps, displace=asset_type == "surface")]
 
     catalog = catalog_id(library, asset_type, *(meta.get("categories") or [])[1:3])
     for asset in assets:
