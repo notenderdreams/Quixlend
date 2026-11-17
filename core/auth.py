@@ -1,4 +1,5 @@
 """Quixel account session: Epic browser login, token store, refresh. No bpy."""
+
 import base64
 import json
 import os
@@ -14,9 +15,8 @@ SSO = "https://accounts.quixel.se/api/v1/"
 REALM = "megascans-bridge"
 
 # Epic shows the authorization code as JSON on this page once logged in.
-_REDIRECT = (
-    "https://www.epicgames.com/id/api/redirect?"
-    + urllib.parse.urlencode({"clientId": EPIC_CLIENT_ID, "responseType": "code"})
+_REDIRECT = "https://www.epicgames.com/id/api/redirect?" + urllib.parse.urlencode(
+    {"clientId": EPIC_CLIENT_ID, "responseType": "code"}
 )
 LOGIN_URL = "https://www.epicgames.com/id/login?" + urllib.parse.urlencode({"redirectUrl": _REDIRECT})
 
@@ -71,10 +71,17 @@ class Session:
     def refresh(self):
         if not self.token:
             raise AuthError("Not logged in")
-        self._store(http.post(SSO + "login", {
-            "email": self.email, "token": self.token,
-            "refreshToken": self.refresh_token, "realm": REALM,
-        }))
+        self._store(
+            http.post(
+                SSO + "login",
+                {
+                    "email": self.email,
+                    "token": self.token,
+                    "refreshToken": self.refresh_token,
+                    "realm": REALM,
+                },
+            )
+        )
 
     def bearer(self) -> str:
         """Valid access token, refreshed if within 60s of expiry."""

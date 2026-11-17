@@ -1,10 +1,11 @@
 """Scheduler: two at a time, the rest wait in click order."""
+
 import sys
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
-from core.scheduler import Scheduler  # noqa: E402
+from core.scheduler import Scheduler
 
 
 class Harness:
@@ -15,6 +16,7 @@ class Harness:
         def run(finished):
             self.started.append(key)
             self.finish[key] = finished
+
         return self.scheduler.add(key, run)
 
 
@@ -49,7 +51,7 @@ class SchedulerTest(unittest.TestCase):
     def test_cancelling_a_job_that_is_not_waiting_does_nothing(self):
         h = Harness()
         h.add("a")
-        self.assertFalse(h.scheduler.cancel("a"))   # already running
+        self.assertFalse(h.scheduler.cancel("a"))  # already running
         self.assertFalse(h.scheduler.cancel("zzz"))  # unknown
 
     def test_adding_the_same_job_twice_is_ignored(self):
@@ -80,6 +82,7 @@ class SchedulerTest(unittest.TestCase):
 
         def broken(finished):
             raise RuntimeError("boom")
+
         with self.assertRaises(RuntimeError):
             s.add("a", broken)
         s.add("b", lambda finished: started.append("b"))

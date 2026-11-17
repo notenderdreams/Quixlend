@@ -1,4 +1,5 @@
 """Run blocking work on a thread; deliver the result on Blender's main thread."""
+
 import queue
 import threading
 import traceback
@@ -11,12 +12,14 @@ dirty = threading.Event()  # set by workers to request a UI redraw (progress upd
 
 def run(work, on_done):
     """work() runs on a thread; on_done(result, error) runs later on the main thread."""
+
     def target():
         try:
             _done.put((on_done, work(), None))
         except Exception as e:  # reported to the user by on_done
             traceback.print_exc()
             _done.put((on_done, None, e))
+
     threading.Thread(target=target, daemon=True).start()
 
 

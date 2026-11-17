@@ -4,6 +4,7 @@ Runs in its own background Blender so the user's session is never touched:
     blender -b --factory-startup --python build.py -- <asset_dir> <library_root>
 Standalone on purpose: no imports from the rest of the add-on.
 """
+
 import json
 import re
 import sys
@@ -15,8 +16,13 @@ import bpy
 MAP_RE = re.compile(r"_(?:\d+K_)?([A-Za-z]+?)(?:_LOD(\d+))?\.(jpe?g|png|exr)$", re.I)
 MESH_RE = re.compile(r"(?:_|^)LOD(\d+)[^/]*\.fbx$", re.I)
 CATALOG_NS = uuid.UUID("5f1d3c1e-6c2b-4b8e-9a51-51a1e0b7c0de")
-TYPE_LABEL = {"3d": "3D Assets", "3dplant": "3D Plants", "surface": "Surfaces", "atlas": "Atlases",
-              "brush": "Brushes"}
+TYPE_LABEL = {
+    "3d": "3D Assets",
+    "3dplant": "3D Plants",
+    "surface": "Surfaces",
+    "atlas": "Atlases",
+    "brush": "Brushes",
+}
 
 
 def find_maps(folder, lod=None):
@@ -27,9 +33,11 @@ def find_maps(folder, lod=None):
         if not m or "preview" in path.name.lower() or "billboard" in str(path.parent).lower():
             continue
         role, map_lod, ext = m.group(1).lower(), m.group(2), m.group(3).lower()
-        score = (map_lod is not None and lod is not None and int(map_lod) == lod,
-                 map_lod is None,
-                 ext == "exr" if role == "displacement" else ext != "exr")
+        score = (
+            map_lod is not None and lod is not None and int(map_lod) == lod,
+            map_lod is None,
+            ext == "exr" if role == "displacement" else ext != "exr",
+        )
         if role not in best or score > best[role][0]:
             best[role] = (score, path)
     return {role: path for role, (_, path) in best.items()}
@@ -175,8 +183,12 @@ def build_group_material(name, maps, displace=False):
     group.node_tree, group.name, group.label, group.location = ng, name, name, (-330, 0)
     group.width = 260
     links.new(mapping.outputs["Vector"], group.inputs["Vector"])
-    for label, socket in (("Base Color", "Base Color"), ("Roughness", "Roughness"), ("Metallic", "Metallic"),
-                          ("Normal", "Normal")):
+    for label, socket in (
+        ("Base Color", "Base Color"),
+        ("Roughness", "Roughness"),
+        ("Metallic", "Metallic"),
+        ("Normal", "Normal"),
+    ):
         if label in group.outputs:
             links.new(group.outputs[label], bsdf.inputs[socket])
     surface = bsdf.outputs["BSDF"]
@@ -256,7 +268,9 @@ def catalog_id(library, asset_type, *sub):
 
 
 def set_preview(datablock, folder):
-    src = next(iter(sorted(folder.glob("_Thumb.jpg"))), None) or next(iter(sorted(folder.glob("*_Preview.*"))), None)
+    src = next(iter(sorted(folder.glob("_Thumb.jpg"))), None) or next(
+        iter(sorted(folder.glob("*_Preview.*"))), None
+    )
     if not src:
         return
     img = bpy.data.images.load(str(src))
@@ -314,4 +328,4 @@ def build(folder, library):
 
 
 if __name__ == "__main__":
-    build(*sys.argv[sys.argv.index("--") + 1:][:2])
+    build(*sys.argv[sys.argv.index("--") + 1 :][:2])

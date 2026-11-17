@@ -3,6 +3,7 @@
 Blender's Python UI has no drag source, so the panel only reserves empty space and
 this module draws the cards into it and handles the mouse itself.
 """
+
 import math
 import random
 import time
@@ -34,12 +35,21 @@ def _size_text(n):
 def _min_card():
     """Narrowest card that still shows the widest download size next to the icon."""
     s = scale()
-    widest = max((_size_text(n) for h in ui.state.hits if h["id"] not in ui.state.local
-                  and (n := ui.download_size(h["id"], fetch=False))), key=len, default="")
+    widest = max(
+        (
+            _size_text(n)
+            for h in ui.state.hits
+            if h["id"] not in ui.state.local and (n := ui.download_size(h["id"], fetch=False))
+        ),
+        key=len,
+        default="",
+    )
     if not widest:
         return 0
     blf.size(0, 10 * s)
-    return 3 * 4 * s + 46 * s + 8 * s + 7 * s + 4 * s + blf.dimensions(0, widest)[0]  # pads, res button, margins, icon, gap, text
+    return (
+        3 * 4 * s + 46 * s + 8 * s + 7 * s + 4 * s + blf.dimensions(0, widest)[0]
+    )  # pads, res button, margins, icon, gap, text
 
 
 def metrics(region):
@@ -50,8 +60,16 @@ def metrics(region):
     cols = max(1, int((width + gap) // (max(100 * s, _min_card()) + gap)))
     card = (width - (cols - 1) * gap) / cols
     rows = math.ceil(len(ui.state.hits) / cols)
-    return {"left": left, "gap": gap, "label": label, "cols": cols, "card": card,
-            "cell": card + label + gap, "height": rows * (card + label + gap), "unit": 20 * s}
+    return {
+        "left": left,
+        "gap": gap,
+        "label": label,
+        "cols": cols,
+        "card": card,
+        "cell": card + label + gap,
+        "height": rows * (card + label + gap),
+        "unit": 20 * s,
+    }
 
 
 def cells(region):
@@ -60,8 +78,13 @@ def cells(region):
     top = region.view2d.view_to_region(0, 0, clip=False)[1] - HEADER_UNITS * m["unit"]
     out = []
     for i, hit in enumerate(ui.state.hits):
-        out.append((hit, m["left"] + (i % m["cols"]) * (m["card"] + m["gap"]),
-                    top - (i // m["cols"]) * m["cell"] - m["card"]))
+        out.append(
+            (
+                hit,
+                m["left"] + (i % m["cols"]) * (m["card"] + m["gap"]),
+                top - (i // m["cols"]) * m["cell"] - m["card"],
+            )
+        )
     return m, out
 
 
@@ -72,7 +95,12 @@ def buttons(m, hit, x, y):
     st = ui.state
     if hit["id"] in st.cancel:  # downloading: the second button cancels
         cancel_w = 24 * scale()
-        return (bx, by, m["card"] - 3 * pad - cancel_w, bh), (bx + m["card"] - 2 * pad - cancel_w, by, cancel_w, bh)
+        return (bx, by, m["card"] - 3 * pad - cancel_w, bh), (
+            bx + m["card"] - 2 * pad - cancel_w,
+            by,
+            cancel_w,
+            bh,
+        )
     if hit["id"] in st.local or hit["id"] in st.progress:
         return (bx, by, m["card"] - 2 * pad, bh), None
     res_w = 46 * scale()
@@ -104,29 +132,45 @@ def active(region):
 
 # ---- drawing ---------------------------------------------------------------
 
+
 def _rect(x, y, w, h, color):
     shader = gpu.shader.from_builtin("UNIFORM_COLOR")
     shader.uniform_float("color", color)
-    batch_for_shader(shader, "TRI_FAN", {"pos": ((x, y), (x + w, y), (x + w, y + h), (x, y + h))}).draw(shader)
+    batch_for_shader(shader, "TRI_FAN", {"pos": ((x, y), (x + w, y), (x + w, y + h), (x, y + h))}).draw(
+        shader
+    )
 
 
 def _rrect(x, y, w, h, radius, color):
     """Rounded rectangle, like Blender's buttons."""
     r = min(radius, w / 2, h / 2)
     pts = []
-    for cx, cy, a0 in ((x + w - r, y + r, -90), (x + w - r, y + h - r, 0), (x + r, y + h - r, 90), (x + r, y + r, 180)):
-        pts += [(cx + r * math.cos(math.radians(a0 + i * 15)), cy + r * math.sin(math.radians(a0 + i * 15)))
-                for i in range(7)]
+    for cx, cy, a0 in (
+        (x + w - r, y + r, -90),
+        (x + w - r, y + h - r, 0),
+        (x + r, y + h - r, 90),
+        (x + r, y + r, 180),
+    ):
+        pts += [
+            (cx + r * math.cos(math.radians(a0 + i * 15)), cy + r * math.sin(math.radians(a0 + i * 15)))
+            for i in range(7)
+        ]
     shader = gpu.shader.from_builtin("UNIFORM_COLOR")
     shader.uniform_float("color", color)
-    batch_for_shader(shader, "TRI_FAN", {"pos": [(x + w / 2, y + h / 2)] + pts + [pts[0]]}).draw(shader)
+    batch_for_shader(shader, "TRI_FAN", {"pos": [(x + w / 2, y + h / 2), *pts, pts[0]]}).draw(shader)
 
 
 def _image(image, x, y, w, h):
     shader = gpu.shader.from_builtin("IMAGE")
     shader.uniform_sampler("image", gpu.texture.from_image(image))
-    batch_for_shader(shader, "TRI_FAN", {"pos": ((x, y), (x + w, y), (x + w, y + h), (x, y + h)),
-                                         "texCoord": ((0, 0), (1, 0), (1, 1), (0, 1))}).draw(shader)
+    batch_for_shader(
+        shader,
+        "TRI_FAN",
+        {
+            "pos": ((x, y), (x + w, y), (x + w, y + h), (x, y + h)),
+            "texCoord": ((0, 0), (1, 0), (1, 1), (0, 1)),
+        },
+    ).draw(shader)
 
 
 def _text(text, x, y, size, color, max_width):
@@ -141,9 +185,13 @@ def _text(text, x, y, size, color, max_width):
 def _colors():
     ui_theme = bpy.context.preferences.themes[0].user_interface
     btn = ui_theme.wcol_regular
-    return {"card": tuple(ui_theme.wcol_box.inner), "accent": tuple(ui_theme.wcol_progress.item),
-            "button": (*btn.inner[:3], 1), "button_text": (*btn.text, 1),
-            "footer": _lift((*ui_theme.wcol_box.inner[:3], 1), 0.07)}
+    return {
+        "card": tuple(ui_theme.wcol_box.inner),
+        "accent": tuple(ui_theme.wcol_progress.item),
+        "button": (*btn.inner[:3], 1),
+        "button_text": (*btn.text, 1),
+        "footer": _lift((*ui_theme.wcol_box.inner[:3], 1), 0.07),
+    }
 
 
 def _lift(c, amount):
@@ -152,7 +200,13 @@ def _lift(c, amount):
 
 def _duration(seconds):
     seconds = int(seconds + 0.5)
-    return f"{seconds}s" if seconds < 60 else f"{seconds // 60}m {seconds % 60:02d}s" if seconds < 3600 else f"{seconds // 3600}h {seconds % 3600 // 60:02d}m"
+    return (
+        f"{seconds}s"
+        if seconds < 60
+        else f"{seconds // 60}m {seconds % 60:02d}s"
+        if seconds < 3600
+        else f"{seconds // 3600}h {seconds % 3600 // 60:02d}m"
+    )
 
 
 def _progress_label(asset_id):
@@ -161,9 +215,18 @@ def _progress_label(asset_id):
     bps, eta = ui.state.speed.get(asset_id, (None, None))
     if not bps:
         return percent
-    rate = f"{bps / 1e6:.0f} MB/s" if bps >= 10e6 else f"{bps / 1e6:.1f} MB/s" if bps >= 1e6 else f"{bps / 1e3:.0f} KB/s"
-    return [f"{percent} - {rate} - {_duration(eta)} left", f"{percent} - {rate}", percent] if eta is not None \
+    rate = (
+        f"{bps / 1e6:.0f} MB/s"
+        if bps >= 10e6
+        else f"{bps / 1e6:.1f} MB/s"
+        if bps >= 1e6
+        else f"{bps / 1e3:.0f} KB/s"
+    )
+    return (
+        [f"{percent} - {rate} - {_duration(eta)} left", f"{percent} - {rate}", percent]
+        if eta is not None
         else [f"{percent} - {rate}", percent]
+    )
 
 
 def _progress_value(asset_id):
@@ -206,10 +269,23 @@ def _draw_download(rect, size, fill, text, hovered):
         label, full = "", 2 * a
     left = x + (w - full) / 2
     cx, cy = left + a, y + h / 2 + t
-    tris = ((cx - a, cy), (cx + a, cy), (cx, cy - a),  # arrow head
-            (cx - t / 2, cy + a), (cx + t / 2, cy + a), (cx - t / 2, cy), (cx + t / 2, cy + a), (cx + t / 2, cy), (cx - t / 2, cy),  # stem
-            (cx - a, cy - a - t), (cx + a, cy - a - t), (cx - a, cy - a - 2 * t),  # tray
-            (cx + a, cy - a - t), (cx + a, cy - a - 2 * t), (cx - a, cy - a - 2 * t))
+    tris = (
+        (cx - a, cy),
+        (cx + a, cy),
+        (cx, cy - a),  # arrow head
+        (cx - t / 2, cy + a),
+        (cx + t / 2, cy + a),
+        (cx - t / 2, cy),
+        (cx + t / 2, cy + a),
+        (cx + t / 2, cy),
+        (cx - t / 2, cy),  # stem
+        (cx - a, cy - a - t),
+        (cx + a, cy - a - t),
+        (cx - a, cy - a - 2 * t),  # tray
+        (cx + a, cy - a - t),
+        (cx + a, cy - a - 2 * t),
+        (cx - a, cy - a - 2 * t),
+    )
     shader = gpu.shader.from_builtin("UNIFORM_COLOR")
     shader.uniform_float("color", text)
     batch_for_shader(shader, "TRIS", {"pos": tris}).draw(shader)
@@ -224,8 +300,14 @@ def _draw_cancel(rect, fill, text, hovered):
     shader = gpu.shader.from_builtin("UNIFORM_COLOR")
     shader.uniform_float("color", text)
     for sign in (1, -1):  # the two arms of the cross
-        pts = ((cx - a, cy - sign * a + t), (cx - a, cy - sign * a - t), (cx + a, cy + sign * a - t),
-               (cx - a, cy - sign * a + t), (cx + a, cy + sign * a - t), (cx + a, cy + sign * a + t))
+        pts = (
+            (cx - a, cy - sign * a + t),
+            (cx - a, cy - sign * a - t),
+            (cx + a, cy + sign * a - t),
+            (cx - a, cy - sign * a + t),
+            (cx + a, cy + sign * a - t),
+            (cx + a, cy + sign * a + t),
+        )
         batch_for_shader(shader, "TRIS", {"pos": pts}).draw(shader)
 
 
@@ -240,7 +322,14 @@ def _draw_button(rect, label, fill, text, hovered, colors, progress=None, dropdo
     if isinstance(label, list):  # variants, longest first
         label = next((v for v in label if blf.dimensions(0, v)[0] <= w - 8 * scale()), label[-1])
     tw = blf.dimensions(0, label)[0]
-    _text(label, x + max(4 * scale(), (w - tw) / 2 - (5 * scale() if dropdown else 0)), y + (h - size) / 2 + 1.5 * scale(), size, text, w - 8 * scale())
+    _text(
+        label,
+        x + max(4 * scale(), (w - tw) / 2 - (5 * scale() if dropdown else 0)),
+        y + (h - size) / 2 + 1.5 * scale(),
+        size,
+        text,
+        w - 8 * scale(),
+    )
 
 
 def _loader(x, y, card):
@@ -254,7 +343,11 @@ def _loader(x, y, card):
         angle = 2 * math.pi * i / n
         shader.uniform_float("color", (1, 1, 1, 0.15 + 0.85 * ((head - i) % n) / n))
         px, py, d = cx + radius * math.cos(angle), cy + radius * math.sin(angle), 1.8 * s
-        batch_for_shader(shader, "TRI_FAN", {"pos": ((px - d, py - d), (px + d, py - d), (px + d, py + d), (px - d, py + d))}).draw(shader)
+        batch_for_shader(
+            shader,
+            "TRI_FAN",
+            {"pos": ((px - d, py - d), (px + d, py - d), (px + d, py + d), (px - d, py + d))},
+        ).draw(shader)
     ui.jobs.dirty.set()  # keep redrawing while it spins
 
 
@@ -287,25 +380,49 @@ def draw_grid():
         over = hover[:2] == (region.as_pointer(), asset_id) if hover else False
         zone = hover[2] if over else None
         _rect(x, y + card - 20 * s, card, 20 * s, (0, 0, 0, 0.6))
-        _text(hit["name"], x + 6 * s, y + card - 14 * s, 11 * s, (1, 1, 1, 1) if over else (0.8, 0.8, 0.8, 1), card - 12 * s)
+        _text(
+            hit["name"],
+            x + 6 * s,
+            y + card - 14 * s,
+            11 * s,
+            (1, 1, 1, 1) if over else (0.8, 0.8, 0.8, 1),
+            card - 12 * s,
+        )
         main, res = buttons(m, hit, x, y)
-        local, busy = asset_id in ui.state.local, asset_id in ui.state.progress
+        _local, busy = asset_id in ui.state.local, asset_id in ui.state.progress
         unavailable = ui.state.owned is not None and asset_id not in ui.state.owned
         label = _main_label(asset_id, hit)
         hovered = zone == "main" and not busy and not unavailable
         if label == "Download":
             _draw_download(main, ui.download_size(asset_id), colors["button"], colors["button_text"], hovered)
         else:
-            _draw_button(main, label, colors["button"], colors["button_text"], hovered, colors,
-                         _progress_value(asset_id))
+            _draw_button(
+                main,
+                label,
+                colors["button"],
+                colors["button_text"],
+                hovered,
+                colors,
+                _progress_value(asset_id),
+            )
         if res and asset_id in ui.state.cancel:
             _draw_cancel(res, colors["button"], colors["button_text"], zone == "res")
         elif res:
-            _draw_button(res, ui.res_label(), colors["button"], colors["button_text"], zone == "res", colors, dropdown=True)
+            _draw_button(
+                res,
+                ui.res_label(),
+                colors["button"],
+                colors["button_text"],
+                zone == "res",
+                colors,
+                dropdown=True,
+            )
             ax, ay, a = res[0] + res[2] - 9 * s, res[1] + res[3] / 2, 2.5 * s  # dropdown arrow
             shader = gpu.shader.from_builtin("UNIFORM_COLOR")
             shader.uniform_float("color", colors["button_text"])
-            batch_for_shader(shader, "TRIS", {"pos": ((ax - a, ay + a * 0.6), (ax + a, ay + a * 0.6), (ax, ay - a * 0.8))}).draw(shader)
+            batch_for_shader(
+                shader, "TRIS", {"pos": ((ax - a, ay + a * 0.6), (ax + a, ay + a * 0.6), (ax, ay - a * 0.8))}
+            ).draw(shader)
     gpu.state.blend_set("NONE")
     st = ui.state
     if items and not st.loading and st.page + 1 < st.pages and items[-1][2] + m["card"] >= 0:
@@ -325,6 +442,7 @@ def preview(asset_id, max_edges=60000):
     key = (asset_id, obj.name)
     if key not in batches:
         import numpy as np
+
         mesh = obj.data
         co = np.empty(len(mesh.vertices) * 3, np.float32)
         mesh.vertices.foreach_get("co", co)
@@ -370,6 +488,7 @@ def draw_drag():
 
 # ---- mouse -----------------------------------------------------------------
 
+
 class QUIXLEND_OT_hover(bpy.types.Operator):
     bl_idname = "quixlend.hover"
     bl_label = "Highlight Asset"
@@ -378,7 +497,11 @@ class QUIXLEND_OT_hover(bpy.types.Operator):
     def invoke(self, context, event):
         global hover
         region = context.region
-        hit, zone = zone_at(region, event.mouse_region_x, event.mouse_region_y) if region and active(region) else (None, None)
+        hit, zone = (
+            zone_at(region, event.mouse_region_x, event.mouse_region_y)
+            if region and active(region)
+            else (None, None)
+        )
         current = (region.as_pointer(), hit["id"], zone) if hit else None
         if current != hover:
             hover = current
@@ -453,11 +576,15 @@ class QUIXLEND_OT_card(bpy.types.Operator):
         rv3d = self.area.spaces.active.region_3d
         origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, (x, y))
         direction = view3d_utils.region_2d_to_vector_3d(region, rv3d, (x, y))
-        hit, location, _, _, target, _ = context.scene.ray_cast(context.evaluated_depsgraph_get(), origin, direction)
+        hit, location, _, _, target, _ = context.scene.ray_cast(
+            context.evaluated_depsgraph_get(), origin, direction
+        )
         if not hit:
             target = None
-            location = intersect_line_plane(origin, origin + direction, (0, 0, 0), (0, 0, 1)) \
+            location = (
+                intersect_line_plane(origin, origin + direction, (0, 0, 0), (0, 0, 1))
                 or context.scene.cursor.location
+            )
         return location, target
 
     def import_at_cursor(self, context):
@@ -475,7 +602,11 @@ class QUIXLEND_OT_card(bpy.types.Operator):
             return  # released outside the viewport: cancel
         location, target = found
         region = next(r for r in self.area.regions if r.type == "WINDOW")
-        pick = (lambda sources: next((o for o in sources if o.name == chosen), sources[0])) if chosen else random.choice
+        pick = (
+            (lambda sources: next((o for o in sources if o.name == chosen), sources[0]))
+            if chosen
+            else random.choice
+        )
         with context.temp_override(area=self.area, region=region):
             message = ui.place(context, self.hit["id"], location, target, pick=pick)
         if message:
@@ -489,10 +620,14 @@ def register():
     bpy.utils.register_class(QUIXLEND_OT_hover)
     bpy.utils.register_class(QUIXLEND_OT_card)
     space = bpy.types.SpaceView3D
-    _handles.extend([(space.draw_handler_add(draw_grid, (), "UI", "POST_PIXEL"), "UI"),
-                     (space.draw_handler_add(draw_drag, (), "UI", "POST_PIXEL"), "UI"),
-                     (space.draw_handler_add(draw_drag, (), "WINDOW", "POST_PIXEL"), "WINDOW"),
-                     (space.draw_handler_add(draw_drag_3d, (), "WINDOW", "POST_VIEW"), "WINDOW")])
+    _handles.extend(
+        [
+            (space.draw_handler_add(draw_grid, (), "UI", "POST_PIXEL"), "UI"),
+            (space.draw_handler_add(draw_drag, (), "UI", "POST_PIXEL"), "UI"),
+            (space.draw_handler_add(draw_drag, (), "WINDOW", "POST_PIXEL"), "WINDOW"),
+            (space.draw_handler_add(draw_drag_3d, (), "WINDOW", "POST_VIEW"), "WINDOW"),
+        ]
+    )
     keyconfig = bpy.context.window_manager.keyconfigs.addon
     if keyconfig:  # absent in background mode
         keymap = keyconfig.keymaps.new(name="3D View Generic", space_type="VIEW_3D")

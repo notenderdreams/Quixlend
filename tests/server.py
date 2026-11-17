@@ -1,4 +1,5 @@
 """Throwaway HTTP server for downloader tests. Behaviour is configured per test; every request is logged."""
+
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -6,15 +7,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 class TestServer:
     def __init__(self, files, ranges=True):
-        self.files = files      # path -> bytes
-        self.ranges = ranges    # honour Range headers
-        self.fail = {}          # request number (1-based) -> status code to answer with
-        self.truncate = set()   # request numbers answered with half a body
-        self.delay = 0.0        # seconds to wait before answering
-        self.bps = None         # throttle each response body to this many bytes per second
-        self.deny = 0           # answer 403 to this many requests first
-        self.token = None       # when set, only URLs carrying ?t=<token> are valid; others get 403 (expired links)
-        self.log = []           # [{"path", "range", "status", "conn"}]
+        self.files = files  # path -> bytes
+        self.ranges = ranges  # honour Range headers
+        self.fail = {}  # request number (1-based) -> status code to answer with
+        self.truncate = set()  # request numbers answered with half a body
+        self.delay = 0.0  # seconds to wait before answering
+        self.bps = None  # throttle each response body to this many bytes per second
+        self.deny = 0  # answer 403 to this many requests first
+        self.token = None  # when set, only URLs carrying ?t=<token> are valid; others get 403 (expired links)
+        self.log = []  # [{"path", "range", "status", "conn"}]
         self._lock = threading.Lock()
         outer = self
 
@@ -48,8 +49,12 @@ class TestServer:
     def _handle(self, h):
         with self._lock:
             number = len(self.log) + 1
-            entry = {"path": h.path.lstrip("/").split("?")[0], "range": h.headers.get("Range"), "status": None,
-                     "conn": h.client_address[1]}
+            entry = {
+                "path": h.path.lstrip("/").split("?")[0],
+                "range": h.headers.get("Range"),
+                "status": None,
+                "conn": h.client_address[1],
+            }
             self.log.append(entry)
             stale = self.token is not None and h.path.partition("?t=")[2] != self.token
             forced = self.fail.get(number) or (403 if self.deny or stale else None)
@@ -67,7 +72,7 @@ class TestServer:
             start, _, end = entry["range"].removeprefix("bytes=").partition("-")
             start = int(start)
             end = min(int(end) if end else len(data) - 1, len(data) - 1)
-            status, body = 206, data[start:end + 1]
+            status, body = 206, data[start : end + 1]
             headers["Content-Range"] = f"bytes {start}-{end}/{len(data)}"
         if self.ranges:
             headers["Accept-Ranges"] = "bytes"
@@ -77,11 +82,11 @@ class TestServer:
         for k, v in headers.items():
             h.send_header(k, v)
         h.end_headers()
-        out = body[:len(body) // 2] if number in self.truncate else body
+        out = body[: len(body) // 2] if number in self.truncate else body
         if self.bps:
             step = max(1, int(self.bps / 20))  # 20 slices a second
             for i in range(0, len(out), step):
-                h.wfile.write(out[i:i + step])
+                h.wfile.write(out[i : i + step])
                 h.wfile.flush()
                 time.sleep(step / self.bps)
         else:

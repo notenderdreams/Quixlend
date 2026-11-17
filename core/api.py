@@ -3,6 +3,7 @@
 Payload logic is a port of Bridge's `initiateDownload` (app/actions/myscans.js)
 and its helpers in app/utils/index.js.
 """
+
 from . import http
 
 API = "https://quixel.com/v1/"
@@ -15,10 +16,17 @@ FBX = "application/x-fbx"
 
 # Bridge's default-selected texture components (reducers/settings.js).
 COMPONENTS = [
-    ("albedo", "image/jpeg"), ("metalness", "image/jpeg"), ("roughness", "image/jpeg"),
-    ("displacement", "jpeg+exr"), ("normal", "image/jpeg"), ("ao", "image/jpeg"),
-    ("opacity", "image/jpeg"), ("brush", "image/jpeg"), ("fuzz", "image/jpeg"),
-    ("translucency", "image/jpeg"), ("transmission", "image/jpeg"),
+    ("albedo", "image/jpeg"),
+    ("metalness", "image/jpeg"),
+    ("roughness", "image/jpeg"),
+    ("displacement", "jpeg+exr"),
+    ("normal", "image/jpeg"),
+    ("ao", "image/jpeg"),
+    ("opacity", "image/jpeg"),
+    ("brush", "image/jpeg"),
+    ("fuzz", "image/jpeg"),
+    ("translucency", "image/jpeg"),
+    ("transmission", "image/jpeg"),
 ]
 
 
@@ -42,8 +50,14 @@ class Client:
     def _call(self, path, body=None):
         def go():
             headers = {"Authorization": f"Bearer {self.session.bearer()}"}
-            return http.request(API + path, body=body, headers=headers,
-                                method="POST" if body is not None else None, timeout=60)
+            return http.request(
+                API + path,
+                body=body,
+                headers=headers,
+                method="POST" if body is not None else None,
+                timeout=60,
+            )
+
         try:
             return go()
         except http.HttpError as e:
@@ -68,6 +82,7 @@ class Client:
 
 
 # ---- payload builder -------------------------------------------------------
+
 
 def _parse_res(res):
     return [int(x) for x in res.split("x")]
@@ -147,18 +162,27 @@ def build_payload(asset, resolution=4096, lods=(0,)):
 
     is_3d = cat0 == "3d"
     lod_normals = len(lods) > 1
-    components = _process([c for c in selected(prop) if c["type"] != "normal" or not is_3d or lod_normals],
-                          exr_access)
-    config = {"highpoly": False, "ztool": False, "lowerlod_normals": lod_normals,
-              "albedo_lods": False, "meshMimeType": FBX, "brushes": False}
+    components = _process(
+        [c for c in selected(prop) if c["type"] != "normal" or not is_3d or lod_normals], exr_access
+    )
+    config = {
+        "highpoly": False,
+        "ztool": False,
+        "lowerlod_normals": lod_normals,
+        "albedo_lods": False,
+        "meshMimeType": FBX,
+        "brushes": False,
+    }
     if is_3d:
-        by_tris = sorted((m for m in asset.get("meshes") or [] if m["type"] == "lod"),
-                         key=lambda m: -m["tris"])
+        by_tris = sorted(
+            (m for m in asset.get("meshes") or [] if m["type"] == "lod"), key=lambda m: -m["tris"]
+        )
         tris = [m["tris"] for i, m in enumerate(by_tris) if i in lods]
         config["lods"] = tris
         if not lod_normals and tris and any(c["type"] == "normal" for c in asset.get(prop) or []):
-            components.append({"type": "normal", "resolution": res_x,
-                               "mimeType": "image/jpeg", "tris": tris[0]})
+            components.append(
+                {"type": "normal", "resolution": res_x, "mimeType": "image/jpeg", "tris": tris[0]}
+            )
     return {"asset": asset_id, "components": components, "config": config}
 
 
@@ -168,12 +192,16 @@ def payload_size(asset, payload):
     for c in asset.get("components") or []:
         for u in c.get("uris") or []:
             for r in u["resolutions"]:
-                files += [(c["type"], r["resolution"], f["mimeType"], f.get("tris"), f["contentLength"])
-                          for f in r["formats"]]
+                files += [
+                    (c["type"], r["resolution"], f["mimeType"], f.get("tris"), f["contentLength"])
+                    for f in r["formats"]
+                ]
     pool = {"components": files}
     for key in ("maps", "billboards"):
-        pool[key] = [(m["type"], m["resolution"], m["mimeType"], None, m["contentLength"])
-                     for m in asset.get(key) or []]
+        pool[key] = [
+            (m["type"], m["resolution"], m["mimeType"], None, m["contentLength"])
+            for m in asset.get(key) or []
+        ]
 
     def pick(want, files):
         t, res, mime, tris = want["type"], want["resolution"], want["mimeType"], want.get("tris")
@@ -186,14 +214,21 @@ def payload_size(asset, payload):
         total += sum(pick(c, pool["billboards"]) for c in payload["billboards"])
     meshes = payload.get("meshes")
     if meshes:  # v2 plants/3D: models are listed per lod
-        total += sum(m["contentLength"] for m in asset.get("models") or []
-                     if m["type"] == "lod" and any(m["lod"] == w["lod"] and m["mimeType"] == w["mimeType"]
-                                                   for w in meshes))
+        total += sum(
+            m["contentLength"]
+            for m in asset.get("models") or []
+            if m["type"] == "lod"
+            and any(m["lod"] == w["lod"] and m["mimeType"] == w["mimeType"] for w in meshes)
+        )
     elif payload.get("config", {}).get("lods"):
         for tris in payload["config"]["lods"]:
-            total += sum(u["contentLength"] for m in asset.get("meshes") or []
-                         if m["type"] == "lod" and m["tris"] == tris
-                         for u in m["uris"] if u["mimeType"] == FBX)
+            total += sum(
+                u["contentLength"]
+                for m in asset.get("meshes") or []
+                if m["type"] == "lod" and m["tris"] == tris
+                for u in m["uris"]
+                if u["mimeType"] == FBX
+            )
     return total
 
 
@@ -210,7 +245,10 @@ def asset_info(asset):
         ("Category", " / ".join(cats[1:])),
         ("Points", "Free" if asset.get("points") == 0 else asset.get("points")),
         ("Physical size", asset.get("physicalSize")),
-        ("Object size", f"{sem['minSize']} - {sem['maxSize']} m" if "minSize" in sem and "maxSize" in sem else ""),
+        (
+            "Object size",
+            f"{sem['minSize']} - {sem['maxSize']} m" if "minSize" in sem and "maxSize" in sem else "",
+        ),
         ("Resolutions", ", ".join(f"{r // 1024}K" if r >= 1024 else str(r) for r in res)),
         ("Max triangles", f"{max(tris):,}" if tris else ""),
         ("Maps", ", ".join(dict.fromkeys(c["type"] for c in comps))),

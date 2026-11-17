@@ -1,4 +1,5 @@
 """Tiny JSON-over-HTTPS helper on urllib. No bpy."""
+
 import json
 import urllib.error
 import urllib.request

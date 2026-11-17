@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Headless harness for the Quixel protocol — no Blender needed.
 
-  python3 cli.py login                 open Epic login page
-  python3 cli.py login <code>          finish login with the code Epic shows
-  python3 cli.py whoami
-  python3 cli.py owned                 ids of acquired assets
-  python3 cli.py search rock [--type 3d] [--owned]
-  python3 cli.py asset <id>            dump extended asset json
-  python3 cli.py download <id> [--res 2048] [--lods 0] [--out DIR] [--dry]
+python3 cli.py login                 open Epic login page
+python3 cli.py login <code>          finish login with the code Epic shows
+python3 cli.py whoami
+python3 cli.py owned                 ids of acquired assets
+python3 cli.py search rock [--type 3d] [--owned]
+python3 cli.py asset <id>            dump extended asset json
+python3 cli.py download <id> [--res 2048] [--lods 0] [--out DIR] [--dry]
 """
+
 import argparse
 import json
 import sys
@@ -53,9 +54,11 @@ def main():
     if args.cmd == "login":
         if not args.code:
             webbrowser.open(auth.LOGIN_URL)
-            print("Sign in with Epic in the browser. The page then shows JSON containing\n"
-                  '"authorizationCode". Finish with:  python3 cli.py login <code>\n\n'
-                  f"If the browser did not open:\n  {auth.LOGIN_URL}")
+            print(
+                "Sign in with Epic in the browser. The page then shows JSON containing\n"
+                '"authorizationCode". Finish with:  python3 cli.py login <code>\n\n'
+                f"If the browser did not open:\n  {auth.LOGIN_URL}"
+            )
             return
         session.login_with_code(args.code)
         print("Logged in as", session.email)
@@ -69,7 +72,7 @@ def main():
         res = api.search(args.query, asset_type=args.type, ids=ids)
         print(res["nbHits"], "hits")
         for h in res["hits"]:
-            print(f'{h["id"]:12} {h.get("type", ""):10} {h["name"]}')
+            print(f"{h['id']:12} {h.get('type', ''):10} {h['name']}")
     elif args.cmd == "asset":
         json.dump(client.asset(args.id), sys.stdout, indent=1)
     elif args.cmd == "download":
@@ -79,7 +82,7 @@ def main():
         res = client.request_download(payload)
         dest = Path(args.out) if args.out else download.asset_dir(LIBRARY, asset)
         files = download.plan(res, dest)
-        for uri, path, size in files:
+        for _uri, path, size in files:
             print(f"  {size or '?':>10}  {path.relative_to(dest)}")
         if args.dry:
             return

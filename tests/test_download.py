@@ -1,16 +1,17 @@
 """Characterization tests for core.download.fetch_all against a local HTTP server."""
+
 import os
 import sys
 import tempfile
 import threading
 import time
-import urllib.error
 import unittest
+import urllib.error
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
-from core import download  # noqa: E402
-from tests.server import TestServer  # noqa: E402
+from core import download
+from tests.server import TestServer
 
 FILES = {"a/big.bin": os.urandom(300_000), "a/small.bin": os.urandom(1_000)}
 
@@ -53,6 +54,7 @@ class FetchAll(unittest.TestCase):
             before = len(server.requests())
             download.fetch_all(plan(server, self.dest))
             self.assertEqual(len(server.requests()), before)
+
 
 class Chunked(unittest.TestCase):
     """Big files are fetched as parallel byte-range chunks (CHUNK shrunk so the test files count as big)."""
@@ -133,7 +135,7 @@ class Retries(unittest.TestCase):
             ranges = [r["range"] for r in server.requests("a/big.bin")]
         for p, data in FILES.items():
             self.assertEqual((self.dest / p).read_bytes(), data)
-        self.assertEqual(len(ranges), 6)       # 5 chunks + the one retried
+        self.assertEqual(len(ranges), 6)  # 5 chunks + the one retried
         self.assertEqual(len(set(ranges)), 5)  # no chunk was fetched twice successfully
         self.assertEqual(seen[-1], sum(map(len, FILES.values())))
 
@@ -147,7 +149,7 @@ class Retries(unittest.TestCase):
 
     def test_gives_up_after_the_retry_budget_with_the_server_error(self):
         with TestServer(FILES) as server:
-            server.fail = {n: 500 for n in range(1, 20)}
+            server.fail = dict.fromkeys(range(1, 20), 500)
             with self.assertRaises(urllib.error.HTTPError) as ctx:
                 download.fetch_all(plan(server, self.dest), workers=1)
             attempts = len(server.requests())
@@ -199,8 +201,11 @@ class LinkRefresh(unittest.TestCase):
             def refresh():
                 calls.append(1)
                 return self.links(server, "new")
+
             seen = []
-            download.fetch_all(self.links(server, "old"), lambda done, total: seen.append(done), refresh=refresh)
+            download.fetch_all(
+                self.links(server, "old"), lambda done, total: seen.append(done), refresh=refresh
+            )
         for p, data in FILES.items():
             self.assertEqual((self.dest / p).read_bytes(), data)
         self.assertEqual(len(calls), 1)  # concurrent 403s share one refresh
@@ -214,6 +219,7 @@ class LinkRefresh(unittest.TestCase):
             def refresh():
                 calls.append(1)
                 return self.links(server, "still-old")
+
             with self.assertRaises(urllib.error.HTTPError) as ctx:
                 download.fetch_all(self.links(server, "old"), refresh=refresh)
             forbidden = [r for r in server.requests() if r["status"] == 403]
@@ -224,7 +230,9 @@ class LinkRefresh(unittest.TestCase):
     def test_403_is_not_retried_before_the_refresh(self):
         with TestServer(FILES) as server:
             server.token = "new"
-            download.fetch_all(self.links(server, "old"), workers=1, refresh=lambda: self.links(server, "new"))
+            download.fetch_all(
+                self.links(server, "old"), workers=1, refresh=lambda: self.links(server, "new")
+            )
             first = server.requests()[0]
             self.assertEqual(first["status"], 403)
             self.assertNotEqual(server.requests()[1]["status"], 403)
@@ -254,7 +262,7 @@ class Resume(unittest.TestCase):
 
     def interrupt(self, server, after=3):
         """Download with the server dying for good after `after` requests; one worker keeps the order fixed."""
-        server.fail = {n: 500 for n in range(after + 1, 100)}
+        server.fail = dict.fromkeys(range(after + 1, 100), 500)
         with self.assertRaises(Exception):
             download.fetch_all(plan(server, self.dest), workers=1)
         server.fail, server.log[:] = {}, []
@@ -335,13 +343,18 @@ class Cancel(unittest.TestCase):
                 outcome.append(None)
             except BaseException as e:
                 outcome.append(e)
+
         thread = threading.Thread(target=run)
         thread.start()
         return thread, outcome
 
     def leftovers(self):
         """Partial files and records still on disk (finished files may stay)."""
-        return [p for p in self.dest.rglob("*") if p.is_file() and ".part" in p.name] if self.dest.exists() else []
+        return (
+            [p for p in self.dest.rglob("*") if p.is_file() and ".part" in p.name]
+            if self.dest.exists()
+            else []
+        )
 
     def test_cancel_stops_quickly_and_deletes_partial_files(self):
         cancel = threading.Event()
@@ -399,10 +412,15 @@ class Speed(unittest.TestCase):
         with TestServer(files) as server:
             server.bps = rate
             started = time.monotonic()
-            download.fetch_all([(server.url("a/big.bin"), self.dest / "a/big.bin", 450_000)], workers=1,
-                               speed=lambda bps, eta: estimates.append((time.monotonic() - started, bps, eta)))
+            download.fetch_all(
+                [(server.url("a/big.bin"), self.dest / "a/big.bin", 450_000)],
+                workers=1,
+                speed=lambda bps, eta: estimates.append((time.monotonic() - started, bps, eta)),
+            )
         early = [e for e in estimates if e[0] < 0.9]
-        self.assertTrue(all(bps is None and eta is None for _, bps, eta in early))  # nothing nonsensical at the start
+        self.assertTrue(
+            all(bps is None and eta is None for _, bps, eta in early)
+        )  # nothing nonsensical at the start
         settled = [(bps, eta, t) for t, bps, eta in estimates if bps]
         self.assertTrue(settled)
         bps, eta, t = settled[len(settled) // 2]
@@ -417,7 +435,7 @@ class Speed(unittest.TestCase):
 
     def test_bytes_already_on_disk_do_not_count_as_speed(self):
         rate = download._Rate()
-        download._now, clock = (lambda: clock_value[0]), None
+        download._now, _clock = (lambda: clock_value[0]), None
         clock_value = [0.0]
         try:
             rate.start(1_000_000)  # a resumed download starts with a megabyte already present
@@ -457,13 +475,12 @@ class DiskSpace(unittest.TestCase):
 
     def test_the_safety_margin_is_kept_free(self):
         download.MARGIN = 1_000
-        with TestServer(FILES) as server:
-            with self.assertRaises(download.DiskFull):
-                download.fetch_all(plan(server, self.dest), free_space=lambda path: self.TOTAL + 999)
+        with TestServer(FILES) as server, self.assertRaises(download.DiskFull):
+            download.fetch_all(plan(server, self.dest), free_space=lambda path: self.TOTAL + 999)
 
     def test_bytes_from_an_earlier_attempt_do_not_need_space_again(self):
         with TestServer(FILES) as server:
-            server.fail = {n: 500 for n in range(4, 100)}  # leaves chunks 0-2 of the big file on disk
+            server.fail = dict.fromkeys(range(4, 100), 500)  # leaves chunks 0-2 of the big file on disk
             with self.assertRaises(Exception):
                 download.fetch_all(plan(server, self.dest), workers=1)
             server.fail, server.log[:] = {}, []

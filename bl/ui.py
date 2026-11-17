@@ -1,4 +1,5 @@
 """Preferences, operators and the 3D Viewport sidebar panel."""
+
 import json
 import math
 import shutil
@@ -22,32 +23,38 @@ BUILD_SCRIPT = str(Path(__file__).with_name("build.py"))
 PER_PAGE = 24
 _icons = None
 _big = None  # large previews for the details popup
-TYPES = [("ALL", "All Types", ""), ("3d", "3D Assets", ""), ("3dplant", "3D Plants", ""),
-         ("surface", "Surfaces", ""), ("atlas", "Atlases", ""), ("brush", "Brushes", "")]
+TYPES = [
+    ("ALL", "All Types", ""),
+    ("3d", "3D Assets", ""),
+    ("3dplant", "3D Plants", ""),
+    ("surface", "Surfaces", ""),
+    ("atlas", "Atlases", ""),
+    ("brush", "Brushes", ""),
+]
 
 session = auth.Session(HOME / "auth.json")
 client = api.Client(session)
 
 
 class state:
-    hits = []       # [{id, name, image}] image = thumbnail datablock (or None)
+    hits = []  # [{id, name, image}] image = thumbnail datablock (or None)
     panel_open = False  # set by the panel each time it draws; tells the grid overlay to draw
-    seq = 0         # id of the latest search
+    seq = 0  # id of the latest search
     page = pages = 0
     status = ""
     loading = False  # a search/page fetch is in flight
-    owned = None    # set of asset ids, None until fetched
-    local = set()   # ids already built into the library
+    owned = None  # set of asset ids, None until fetched
+    local = set()  # ids already built into the library
     library_bytes = None  # disk used by downloaded assets, None until measured
-    progress = {}   # id -> 0..1 while downloading
-    speed = {}      # id -> (bytes/s, seconds left) while downloading; None parts until known
+    progress = {}  # id -> 0..1 while downloading
+    speed = {}  # id -> (bytes/s, seconds left) while downloading; None parts until known
     queue = Scheduler(2)  # at most two assets download at once; the rest wait in click order
     building = set()  # ids past the network part, being built into the library
-    cancel = {}     # id -> threading.Event, present only while the network part can still be cancelled
-    errors = {}     # id -> message
-    sizes = {}      # (id, resolution) -> download bytes
+    cancel = {}  # id -> threading.Event, present only while the network part can still be cancelled
+    errors = {}  # id -> message
+    sizes = {}  # (id, resolution) -> download bytes
     opening = None  # id of the card whose details are loading
-    assets = {}     # id -> extended asset (None if the fetch failed), for size estimates
+    assets = {}  # id -> extended asset (None if the fetch failed), for size estimates
 
 
 _pool = ThreadPoolExecutor(4)
@@ -64,6 +71,7 @@ def download_size(asset_id, fetch=True):
             except Exception:
                 return
             jobs.dirty.set()
+
         _pool.submit(fetch_asset)
     asset = state.assets.get(asset_id)
     if not asset:
@@ -104,6 +112,7 @@ def ensure_asset_library():
         root.mkdir(parents=True, exist_ok=True)
         libs.new(name="Megascans", directory=str(root))
     from .build import TYPE_LABEL, catalog_id
+
     for asset_type in TYPE_LABEL:  # one catalog per type, so every section shows before its first download
         catalog_id(root, asset_type)
 
@@ -142,6 +151,7 @@ def load_owned():
 
 # ---- search ----------------------------------------------------------------
 
+
 def _big_preview(hit):
     """Path of the large preview image, downloaded once."""
     path = HOME / "thumbs" / f"{hit['id']}_big.jpg"
@@ -158,7 +168,9 @@ def _thumb(hit):
         images = hit["previews"]["images"]
         path.parent.mkdir(parents=True, exist_ok=True)
         part = path.with_suffix(".part")
-        req = urllib.request.Request(images.get("thumbJpg") or images["thumb"], headers={"User-Agent": http.UA})
+        req = urllib.request.Request(
+            images.get("thumbJpg") or images["thumb"], headers={"User-Agent": http.UA}
+        )
         with urllib.request.urlopen(req, timeout=30) as res:
             part.write_bytes(res.read())
         part.replace(path)
@@ -214,8 +226,15 @@ def start_search(page=0, append=False):
                     bpy.data.images.remove(img)
             state.hits = []
         for hit, path in zip(res["hits"], thumbs):
-            state.hits.append({"id": hit["id"], "name": hit["name"], "type": hit.get("type"),
-                              "big": hit["previews"]["images"].get("preview") or hit["previews"]["images"]["thumb"], "path": str(path)})
+            state.hits.append(
+                {
+                    "id": hit["id"],
+                    "name": hit["name"],
+                    "type": hit.get("type"),
+                    "big": hit["previews"]["images"].get("preview") or hit["previews"]["images"]["thumb"],
+                    "path": str(path),
+                }
+            )
         state.page, state.pages = page, res["nbPages"]
         state.status = f"{res['nbHits']} assets" if state.hits else "No results"
         scan_local()
@@ -239,6 +258,7 @@ class QUIXLEND_OT_search(bpy.types.Operator):
 
 # ---- download --------------------------------------------------------------
 
+
 class QUIXLEND_OT_download(bpy.types.Operator):
     bl_idname = "quixlend.download"
     bl_label = "Download"
@@ -255,7 +275,9 @@ class QUIXLEND_OT_download(bpy.types.Operator):
         stop = state.cancel[asset_id] = threading.Event()
 
         def progress(done_bytes, total):
-            state.progress[asset_id] = done_bytes / max(total, 1)  # the network part only; building is its own state
+            state.progress[asset_id] = done_bytes / max(
+                total, 1
+            )  # the network part only; building is its own state
             jobs.dirty.set()
 
         def fetch():
@@ -263,16 +285,24 @@ class QUIXLEND_OT_download(bpy.types.Operator):
             payload = api.build_payload(asset, resolution)
             dest = download.asset_dir(root, asset)
             plan = lambda: download.plan(client.request_download(payload), dest)
-            download.fetch_all(plan(), progress, refresh=plan, cancel=stop,
-                               speed=lambda bps, eta: state.speed.__setitem__(asset_id, (bps, eta)))
+            download.fetch_all(
+                plan(),
+                progress,
+                refresh=plan,
+                cancel=stop,
+                speed=lambda bps, eta: state.speed.__setitem__(asset_id, (bps, eta)),
+            )
             return dest
 
         def build(dest):
             thumb = HOME / "thumbs" / f"{asset_id}.jpg"  # Quixel's own catalog thumbnail
             if thumb.exists():
                 shutil.copyfile(thumb, dest / "_Thumb.jpg")
-            proc = subprocess.run([blender, "-b", "--factory-startup", "--python", BUILD_SCRIPT,
-                                   "--", str(dest), str(root)], capture_output=True, text=True)
+            proc = subprocess.run(
+                [blender, "-b", "--factory-startup", "--python", BUILD_SCRIPT, "--", str(dest), str(root)],
+                capture_output=True,
+                text=True,
+            )
             if "QUIXLEND_BUILT" not in proc.stdout:
                 raise RuntimeError((proc.stderr or proc.stdout).strip().splitlines()[-1])
 
@@ -377,7 +407,11 @@ def place(context, asset_id, location=None, target=None, pick=None):
             obj.select_set(True)
             context.view_layer.objects.active = obj
     elif materials:
-        targets = [target.original] if target else [o for o in context.selected_objects if hasattr(o.data, "materials")]
+        targets = (
+            [target.original]
+            if target
+            else [o for o in context.selected_objects if hasattr(o.data, "materials")]
+        )
         if not targets:
             return "Drop the material onto an object (or select one first)"
         for obj in targets:
@@ -391,6 +425,7 @@ def place(context, asset_id, location=None, target=None, pick=None):
 
 
 # ---- login -----------------------------------------------------------------
+
 
 def open_details(asset_id, window, area):
     """Fetch preview + asset details off the main thread (card shows a loader meanwhile), then pop up the details."""
@@ -432,7 +467,7 @@ class QUIXLEND_OT_details(bpy.types.Operator):
         return context.window_manager.invoke_popup(self, width=420)
 
     def draw(self, context):
-        layout, st = self.layout, state
+        layout, _st = self.layout, state
         if self.icon:
             layout.template_icon(icon_value=self.icon, scale=14)
         layout.label(text=self.hit["name"])
@@ -504,10 +539,13 @@ class QUIXLEND_OT_clean(bpy.types.Operator):
 
     def invoke(self, context, event):
         return context.window_manager.invoke_confirm(
-            self, event, title="Delete all downloaded assets?",
+            self,
+            event,
+            title="Delete all downloaded assets?",
             message=f"{len(state.local)} assets ({_size(state.library_bytes)}) will be removed from disk. "
-                    "This cannot be undone.",
-            confirm_text="Delete")
+            "This cannot be undone.",
+            confirm_text="Delete",
+        )
 
     def execute(self, context):
         root = library() / "Quixlend"
@@ -536,13 +574,20 @@ def _size(n):
 
 # ---- ui --------------------------------------------------------------------
 
+
 class QuixlendPreferences(bpy.types.AddonPreferences):
     bl_idname = ADDON
-    library: StringProperty(name="Library", subtype="DIR_PATH",
-                            default=str(Path.home() / "Documents" / "Megascans Library"),
-                            description="Folder downloads are stored in; registered as an asset library")
-    resolution: EnumProperty(name="Texture Resolution", default="4096",
-                             items=[("1024", "1K", ""), ("2048", "2K", ""), ("4096", "4K", ""), ("8192", "8K", "")])
+    library: StringProperty(
+        name="Library",
+        subtype="DIR_PATH",
+        default=str(Path.home() / "Documents" / "Megascans Library"),
+        description="Folder downloads are stored in; registered as an asset library",
+    )
+    resolution: EnumProperty(
+        name="Texture Resolution",
+        default="4096",
+        items=[("1024", "1K", ""), ("2048", "2K", ""), ("4096", "4K", ""), ("8192", "8K", "")],
+    )
 
     def draw(self, context):
         self.layout.prop(self, "library")
@@ -592,6 +637,7 @@ class QUIXLEND_PT_browser(bpy.types.Panel):
 
         # The cards are drawn by sidebar.draw_grid into this reserved empty space.
         from . import sidebar
+
         m = sidebar.metrics(context.region)
         blank = layout.column(align=True)
         for _ in range(math.ceil(m["height"] / m["unit"])):
@@ -599,10 +645,15 @@ class QUIXLEND_PT_browser(bpy.types.Panel):
         state.panel_open = True
         if not state.hits:
             box = layout.box()
-            box.label(text="No matching assets" if state.status == "No results" else "Materials, models and plants",
-                      icon="VIEWZOOM")
-            box.label(text="Try another search or asset type." if state.status == "No results"
-                      else "Search by name or choose an asset type.")
+            box.label(
+                text="No matching assets" if state.status == "No results" else "Materials, models and plants",
+                icon="VIEWZOOM",
+            )
+            box.label(
+                text="Try another search or asset type."
+                if state.status == "No results"
+                else "Search by name or choose an asset type."
+            )
         if state.page + 1 < state.pages:
             layout.label(text="Fetching more assets…", icon="SORTTIME")
         if state.hits:
@@ -643,8 +694,18 @@ class QUIXLEND_PT_settings(bpy.types.Panel):
             layout.operator("quixlend.logout", text="Sign Out", icon="QUIT")
 
 
-CLASSES = (QuixlendPreferences, QUIXLEND_OT_search, QUIXLEND_OT_download, QUIXLEND_OT_details, QUIXLEND_OT_login_open,
-           QUIXLEND_OT_login, QUIXLEND_OT_logout, QUIXLEND_OT_clean, QUIXLEND_PT_settings, QUIXLEND_PT_browser)
+CLASSES = (
+    QuixlendPreferences,
+    QUIXLEND_OT_search,
+    QUIXLEND_OT_download,
+    QUIXLEND_OT_details,
+    QUIXLEND_OT_login_open,
+    QUIXLEND_OT_login,
+    QUIXLEND_OT_logout,
+    QUIXLEND_OT_clean,
+    QUIXLEND_PT_settings,
+    QUIXLEND_PT_browser,
+)
 
 
 def _startup():

@@ -1,4 +1,5 @@
 """Fetch the files of a /v1/downloads response into an asset folder. No bpy."""
+
 import collections
 import itertools
 import json
@@ -73,7 +74,9 @@ def plan(res, dest) -> list:
     previews = res.get("previews") or []
     if previews:
         ext = os.path.splitext(urllib.parse.urlparse(previews[0]["uri"]).path)[1]
-        files.append((previews[0]["uri"], dest / f"{asset_id}_Preview{ext}", previews[0].get("contentLength")))
+        files.append(
+            (previews[0]["uri"], dest / f"{asset_id}_Preview{ext}", previews[0].get("contentLength"))
+        )
     for section in SECTIONS:
         items = res.get(section) or []
         for item in [items] if isinstance(items, dict) else items:
@@ -84,8 +87,8 @@ def plan(res, dest) -> list:
     return files
 
 
-CHUNK = 8 << 20   # bytes per ranged request
-READ = 1 << 20    # streaming read size
+CHUNK = 8 << 20  # bytes per ranged request
+READ = 1 << 20  # streaming read size
 
 
 def _get(uri, start=None, end=None):
@@ -139,8 +142,12 @@ class _File:
         try:
             meta = json.loads(self.sidecar.read_text())
             done = set(meta["done"])
-            if (meta["size"] == self.size and meta["chunk"] == CHUNK and self.part.stat().st_size == self.size
-                    and all(isinstance(i, int) and 0 <= i < self.chunks() for i in done)):
+            if (
+                meta["size"] == self.size
+                and meta["chunk"] == CHUNK
+                and self.part.stat().st_size == self.size
+                and all(isinstance(i, int) and 0 <= i < self.chunks() for i in done)
+            ):
                 self.done = done
                 return done
         except (OSError, ValueError, KeyError, TypeError):
@@ -176,8 +183,9 @@ _now = time.monotonic  # patchable clock
 
 class _Rate:
     """Transfer speed over the last few seconds, and the time left at that speed."""
-    WINDOW = 3.0     # seconds of history that count
-    SETTLE = 1.0     # no estimate sooner than this after the start
+
+    WINDOW = 3.0  # seconds of history that count
+    SETTLE = 1.0  # no estimate sooner than this after the start
 
     def start(self, done):
         self.t0 = _now()
@@ -253,8 +261,9 @@ def fetch_all(files, progress=None, workers=8, refresh=None, cancel=None, speed=
             def count(n):
                 if cancel.is_set():
                     raise Cancelled
-                counted[0] += n
+                counted[0] += n  # noqa: B023  (called within the same iteration)
                 on_bytes(n)
+
             try:
                 return job(count)
             except BaseException as e:
@@ -312,7 +321,10 @@ def fetch_all(files, progress=None, workers=8, refresh=None, cancel=None, speed=
         starts = range(CHUNK, f.size, CHUNK)
         f.left = 1 + len(starts)
         for start in starts:
-            put(lambda start=start: attempt(lambda on: chunk(f, start, min(start + CHUNK, f.size) - 1, on)), f.size)
+            put(
+                lambda start=start: attempt(lambda on: chunk(f, start, min(start + CHUNK, f.size) - 1, on)),
+                f.size,
+            )
         f.chunk_done()
 
     def worker():
