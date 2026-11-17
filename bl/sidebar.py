@@ -70,6 +70,9 @@ def buttons(m, hit, x, y):
     pad = 4 * scale()
     bx, by, bh = x + pad, y - m["label"] + pad, m["label"] - 2 * pad
     st = ui.state
+    if hit["id"] in st.cancel:  # downloading: the second button cancels
+        cancel_w = 24 * scale()
+        return (bx, by, m["card"] - 3 * pad - cancel_w, bh), (bx + m["card"] - 2 * pad - cancel_w, by, cancel_w, bh)
     if hit["id"] in st.local or hit["id"] in st.progress:
         return (bx, by, m["card"] - 2 * pad, bh), None
     res_w = 46 * scale()
@@ -187,6 +190,18 @@ def _draw_download(rect, size, fill, text, hovered):
         _text(label, left + 2 * a + gap, y + (h - font) / 2 + 1.5 * t, font, text, tw + 1)
 
 
+def _draw_cancel(rect, fill, text, hovered):
+    x, y, w, h = rect
+    _rrect(x, y, w, h, 3 * scale(), _lift(fill, 0.12) if hovered else fill)
+    cx, cy, a, t = x + w / 2, y + h / 2, 3 * scale(), 0.7 * scale()
+    shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+    shader.uniform_float("color", text)
+    for sign in (1, -1):  # the two arms of the cross
+        pts = ((cx - a, cy - sign * a + t), (cx - a, cy - sign * a - t), (cx + a, cy + sign * a - t),
+               (cx - a, cy - sign * a + t), (cx + a, cy + sign * a - t), (cx + a, cy + sign * a + t))
+        batch_for_shader(shader, "TRIS", {"pos": pts}).draw(shader)
+
+
 def _draw_button(rect, label, fill, text, hovered, colors, progress=None, dropdown=False):
     x, y, w, h = rect
     r = 3 * scale()
@@ -254,7 +269,9 @@ def draw_grid():
         else:
             _draw_button(main, label, colors["button"], colors["button_text"], hovered, colors,
                          ui.state.progress.get(asset_id))
-        if res:
+        if res and asset_id in ui.state.cancel:
+            _draw_cancel(res, colors["button"], colors["button_text"], zone == "res")
+        elif res:
             _draw_button(res, ui.res_label(), colors["button"], colors["button_text"], zone == "res", colors, dropdown=True)
             ax, ay, a = res[0] + res[2] - 9 * s, res[1] + res[3] / 2, 2.5 * s  # dropdown arrow
             shader = gpu.shader.from_builtin("UNIFORM_COLOR")
@@ -378,6 +395,8 @@ class QUIXLEND_OT_card(bpy.types.Operator):
                 self.drop(context, event, chosen)
             elif self.zone is None:
                 ui.open_details(asset_id, context.window, self.area)
+            elif self.zone == "res" and asset_id in st.cancel:
+                st.cancel[asset_id].set()
             elif self.zone == "res":
                 context.window_manager.popup_menu(ui.draw_res_menu, title="Texture Resolution")
             elif self.zone == "main":

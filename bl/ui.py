@@ -3,6 +3,7 @@ import json
 import math
 import shutil
 import subprocess
+import threading
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -37,6 +38,7 @@ class state:
     owned = None    # set of asset ids, None until fetched
     local = set()   # ids already built into the library
     progress = {}   # id -> 0..1 while downloading
+    cancel = {}     # id -> threading.Event, present only while the network part can still be cancelled
     errors = {}     # id -> message
     sizes = {}      # (id, resolution) -> download bytes
     opening = None  # id of the card whose details are loading
@@ -233,6 +235,7 @@ class QUIXLEND_OT_download(bpy.types.Operator):
         resolution, blender = int(prefs().resolution), bpy.app.binary_path
         state.progress[asset_id] = 0.0
         state.errors.pop(asset_id, None)
+        stop = state.cancel[asset_id] = threading.Event()
 
         def progress(done_bytes, total):
             state.progress[asset_id] = 0.9 * done_bytes / max(total, 1)
@@ -243,7 +246,10 @@ class QUIXLEND_OT_download(bpy.types.Operator):
             payload = api.build_payload(asset, resolution)
             dest = download.asset_dir(root, asset)
             plan = lambda: download.plan(client.request_download(payload), dest)
-            download.fetch_all(plan(), progress, refresh=plan)
+            try:
+                download.fetch_all(plan(), progress, refresh=plan, cancel=stop)
+            finally:
+                state.cancel.pop(asset_id, None)  # past the network part there is nothing left to cancel
             thumb = HOME / "thumbs" / f"{asset_id}.jpg"  # Quixel's own catalog thumbnail
             if thumb.exists():
                 shutil.copyfile(thumb, dest / "_Thumb.jpg")
@@ -254,6 +260,8 @@ class QUIXLEND_OT_download(bpy.types.Operator):
 
         def done(_, error):
             state.progress.pop(asset_id, None)
+            if isinstance(error, download.Cancelled):
+                return  # not a failure: no error on the card
             if error:
                 state.errors[asset_id] = download.reason(error)
                 return

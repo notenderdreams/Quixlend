@@ -2,6 +2,8 @@
 import os
 import sys
 import tempfile
+import threading
+import time
 import urllib.error
 import unittest
 from pathlib import Path
@@ -312,6 +314,75 @@ class Resume(unittest.TestCase):
             server.log[:] = []
             download.fetch_all(plan(server, self.dest), workers=1)
             self.assertEqual([r["path"] for r in server.requests()], ["a/small.bin"])
+
+
+class Cancel(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dest = Path(self.tmp.name) / "asset"
+        self.chunk, download.CHUNK = download.CHUNK, 64_000
+
+    def tearDown(self):
+        download.CHUNK = self.chunk
+        self.tmp.cleanup()
+
+    def start(self, server, cancel, **kw):
+        outcome = []
+
+        def run():
+            try:
+                download.fetch_all(plan(server, self.dest), cancel=cancel, **kw)
+                outcome.append(None)
+            except BaseException as e:
+                outcome.append(e)
+        thread = threading.Thread(target=run)
+        thread.start()
+        return thread, outcome
+
+    def leftovers(self):
+        """Partial files and records still on disk (finished files may stay)."""
+        return [p for p in self.dest.rglob("*") if p.is_file() and ".part" in p.name] if self.dest.exists() else []
+
+    def test_cancel_stops_quickly_and_deletes_partial_files(self):
+        cancel = threading.Event()
+        with TestServer(FILES) as server:
+            server.delay = 0.3
+            thread, outcome = self.start(server, cancel, workers=2)
+            time.sleep(0.4)
+            began = time.time()
+            cancel.set()
+            thread.join(5)
+            self.assertFalse(thread.is_alive())
+            self.assertLess(time.time() - began, 2)
+            self.assertLess(len(server.requests()), 6)  # the remaining chunks were never requested
+        self.assertIsInstance(outcome[0], download.Cancelled)
+        self.assertEqual(self.leftovers(), [])
+        self.assertFalse((self.dest / "a/big.bin").exists())
+
+    def test_cancelled_is_not_a_failure(self):
+        self.assertFalse(issubclass(download.Cancelled, download.DownloadError))
+        self.assertEqual(download.reason(download.Cancelled()), "Cancelled")
+
+    def test_cancelled_before_start_makes_no_requests(self):
+        cancel = threading.Event()
+        cancel.set()
+        with TestServer(FILES) as server:
+            with self.assertRaises(download.Cancelled):
+                download.fetch_all(plan(server, self.dest), cancel=cancel)
+            self.assertEqual(server.requests(), [])
+
+    def test_downloading_again_after_a_cancel_starts_cleanly(self):
+        cancel = threading.Event()
+        with TestServer(FILES) as server:
+            server.delay = 0.2
+            thread, _ = self.start(server, cancel, workers=2)
+            time.sleep(0.3)
+            cancel.set()
+            thread.join(5)
+            server.delay = 0
+            download.fetch_all(plan(server, self.dest))
+        for p, data in FILES.items():
+            self.assertEqual((self.dest / p).read_bytes(), data)
 
 
 if __name__ == "__main__":

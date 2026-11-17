@@ -21,6 +21,10 @@ class DownloadError(Exception):
     pass
 
 
+class Cancelled(Exception):
+    """The caller asked to stop; not a failure."""
+
+
 class ShortRead(DownloadError):
     """A response ended early; worth retrying."""
 
@@ -36,6 +40,8 @@ def retryable(e):
 
 def reason(e):
     """Short user-facing explanation of why a download failed."""
+    if isinstance(e, Cancelled):
+        return "Cancelled"
     if isinstance(e, urllib.error.HTTPError):
         return "Link expired or denied" if e.code in (401, 403) else f"Server error {e.code}"
     if isinstance(e, (urllib.error.URLError, HTTPException, OSError)):
@@ -160,11 +166,14 @@ class _File:
 MAX_REFRESHES = 2  # fresh sets of links requested per download before giving up
 
 
-def fetch_all(files, progress=None, workers=8, refresh=None):
+def fetch_all(files, progress=None, workers=8, refresh=None, cancel=None):
     """Download planned files. Big files are split into parallel byte-range chunks, biggest first;
     a server that ignores ranges is streamed whole. progress(done_bytes, total_bytes) is called from
     worker threads. `refresh()`, if given, returns a new plan for the same files with fresh links; it is
-    called when a link has expired (HTTP 403) and the interrupted work is retried with the new links."""
+    called when a link has expired (HTTP 403) and the interrupted work is retried with the new links.
+    Setting the `cancel` threading.Event stops the workers promptly, deletes the partial files and raises
+    Cancelled."""
+    cancel = cancel or threading.Event()
     links, renewed = {}, [0, threading.Lock()]  # path -> current uri; [refresh count, lock]
     total, done, lock = sum(size or 0 for _, _, size in files), [0], threading.Lock()
     todo, failure, seq = queue.PriorityQueue(), [], itertools.count()
@@ -195,6 +204,8 @@ def fetch_all(files, progress=None, workers=8, refresh=None):
             seen, counted = renewed[0], [0]
 
             def count(n):
+                if cancel.is_set():
+                    raise Cancelled
                 counted[0] += n
                 on_bytes(n)
             try:
@@ -264,18 +275,22 @@ def fetch_all(files, progress=None, workers=8, refresh=None):
                 if item[2] is None:
                     return
                 if not failure:
+                    if cancel.is_set():
+                        raise Cancelled
                     item[2]()
             except BaseException as e:
                 failure.append(e)
             finally:
                 todo.task_done()
 
+    started = []
     for uri, path, size in sorted(files, key=lambda f: -(f[2] or 0)):
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.exists() and size and path.stat().st_size == size:
             on_bytes(size)
             continue
         f = _File(uri, path, size, links)
+        started.append(f)
         if not size or size <= CHUNK:
             put(lambda f=f: attempt(lambda on: stream(f, on)), size or 0)
         elif (have := f.resume()) is None:
@@ -298,6 +313,18 @@ def fetch_all(files, progress=None, workers=8, refresh=None):
         todo.put((1, 0, None))  # sentinels sort after every real job
     for t in threads:
         t.join()
+    if cancel.is_set():
+        for f in started:  # unfinished files leave nothing behind
+            if not f.path.exists():
+                f.part.unlink(missing_ok=True)
+                f.sidecar.unlink(missing_ok=True)
+        for _, path, _ in files:
+            for folder in path.parents:
+                try:
+                    folder.rmdir()  # only empty ones go
+                except OSError:
+                    break
+        raise Cancelled
     if failure:
         raise failure[0]
     return [path for _, path, _ in files]
