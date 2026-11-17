@@ -1,8 +1,10 @@
 """Tiny JSON-over-HTTPS helper on urllib. No bpy."""
 
 import json
+import time
 import urllib.error
 import urllib.request
+from http.client import HTTPException
 from typing import Any
 
 UA = "quixlend/0.1"
@@ -35,3 +37,25 @@ def get(url, headers=None) -> Any:
 
 def post(url, body, headers=None) -> Any:
     return request(url, body=body, headers=headers, method="POST")
+
+
+def transient(e: BaseException) -> bool:
+    """Worth another try: dropped or stalled connections, 429 and 5xx. Not 4xx: the same request fails the same way."""
+    if isinstance(e, (HttpError, urllib.error.HTTPError)):  # urllib's is an OSError too, so check it first
+        status = e.status if isinstance(e, HttpError) else e.code
+        return status == 429 or status >= 500
+    return isinstance(e, (OSError, HTTPException))  # URLError, timeouts and resets are all OSErrors
+
+
+def retry(fn, delays=(0.5, 1.5), on_retry=None, give_up=None) -> Any:
+    """fn(), retried after each delay on a transient failure. on_retry(n) is called before retry n;
+    give_up() returning True (the request was superseded) ends the retrying."""
+    for attempt in range(len(delays) + 1):
+        try:
+            return fn()
+        except Exception as e:
+            if attempt == len(delays) or not transient(e) or (give_up and give_up()):
+                raise
+            if on_retry:
+                on_retry(attempt + 1)
+            time.sleep(delays[attempt])

@@ -269,10 +269,17 @@ def start_search(page=0, append=False):
     state.loading = True
 
     def work():
-        res = api.search(query, page, PER_PAGE, None if asset_type == "ALL" else asset_type)
-        with ThreadPoolExecutor(8) as pool:
-            thumbs = list(pool.map(_thumb, res["hits"]))
-        return res, thumbs
+        def attempt():
+            res = api.search(query, page, PER_PAGE, None if asset_type == "ALL" else asset_type)
+            with ThreadPoolExecutor(8) as pool:
+                thumbs = list(pool.map(_thumb, res["hits"]))
+            return res, thumbs
+
+        def retrying(n):
+            state.status = f"Connection dropped, retrying ({n}/2)…"
+            jobs.dirty.set()
+
+        return http.retry(attempt, on_retry=retrying, give_up=lambda: seq != state.seq)
 
     def done(result, error):
         if seq != state.seq:
