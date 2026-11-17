@@ -16,7 +16,7 @@ MAP_RE = re.compile(r"_(?:\d+K_)?([A-Za-z]+?)(?:_LOD(\d+))?\.(jpe?g|png|exr)$", 
 MESH_RE = re.compile(r"(?:_|^)LOD(\d+)[^/]*\.fbx$", re.I)
 CATALOG_NS = uuid.UUID("5f1d3c1e-6c2b-4b8e-9a51-51a1e0b7c0de")
 TYPE_LABEL = {"3d": "3D Assets", "3dplant": "3D Plants", "surface": "Surfaces", "atlas": "Atlases",
-              "decal": "Decals", "imperfection": "Imperfections", "brush": "Brushes"}
+              "brush": "Brushes"}
 
 
 def find_maps(folder, lod=None):
@@ -142,21 +142,22 @@ def import_meshes(folder):
     return objects, lod
 
 
-def catalog_id(library, asset_type):
-    """Deterministic catalog uuid, appended to the library's catalog file when new."""
-    path = f"Megascans/{TYPE_LABEL.get(asset_type, asset_type.title())}"
+def catalog_id(library, asset_type, *sub):
+    """Catalog uuid for Type/Category/Sub, creating it and any missing parents in the library's catalog file."""
+    names = [TYPE_LABEL.get(asset_type, asset_type.title())]
+    names += [str(n).strip().replace("/", "-").replace(":", "-").title() for n in sub if n and str(n).strip()]
     cats = library / "blender_assets.cats.txt"
     text = cats.read_text() if cats.exists() else ""
     if not any(line.strip() == "VERSION 1" for line in text.splitlines()):
         text = "VERSION 1\n\n" + text  # Blender ignores the whole file without this line
-        cats.write_text(text)
-    for line in text.splitlines():  # reuse a catalog that already has this path
-        parts = line.split(":")
-        if len(parts) >= 2 and parts[1] == path:
-            return parts[0]
-    cid = str(uuid.uuid5(CATALOG_NS, path))
-    cats.write_text(text.rstrip("\n") + f"\n{cid}:{path}:{path.replace('/', '-')}\n")
-    return cid
+    known = {line.split(":")[1]: line.split(":")[0] for line in text.splitlines() if line.count(":") >= 2}
+    for depth in range(1, len(names) + 1):
+        path = "/".join(names[:depth])
+        if path not in known:
+            known[path] = str(uuid.uuid5(CATALOG_NS, path))
+            text = text.rstrip("\n") + f"\n{known[path]}:{path}:{path}\n"
+    cats.write_text(text)
+    return known["/".join(names)]
 
 
 def set_preview(datablock, folder):
@@ -201,7 +202,7 @@ def build(folder, library):
     else:
         assets = [build_material(name, maps, displace=asset_type == "surface")]
 
-    catalog = catalog_id(library, asset_type)
+    catalog = catalog_id(library, asset_type, *(meta.get("categories") or [])[1:3])
     for asset in assets:
         asset.asset_mark()
         data = asset.asset_data

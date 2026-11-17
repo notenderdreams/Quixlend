@@ -20,7 +20,7 @@ BUILD_SCRIPT = str(Path(__file__).with_name("build.py"))
 PER_PAGE = 24
 _icons = None
 TYPES = [("ALL", "All Types", ""), ("3d", "3D Assets", ""), ("3dplant", "3D Plants", ""),
-         ("surface", "Surfaces", ""), ("atlas", "Decals & Atlases", ""), ("brush", "Brushes", "")]
+         ("surface", "Surfaces", ""), ("atlas", "Atlases", ""), ("brush", "Brushes", "")]
 
 session = auth.Session(HOME / "auth.json")
 client = api.Client(session)
@@ -57,6 +57,9 @@ def ensure_asset_library():
     if not any(Path(lib.path) == root for lib in libs):
         root.mkdir(parents=True, exist_ok=True)
         libs.new(name="Megascans", directory=str(root))
+    from .build import TYPE_LABEL, catalog_id
+    for asset_type in TYPE_LABEL:  # one catalog per type, so every section shows before its first download
+        catalog_id(root, asset_type)
 
 
 def refresh_asset_browsers():
