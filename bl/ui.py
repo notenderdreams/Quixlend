@@ -59,6 +59,8 @@ if TYPE_CHECKING:
 
         quixlend_query: str
         quixlend_type: str
+        quixlend_category: str
+        quixlend_downloaded: bool
         quixlend_code: str
 
 
@@ -98,6 +100,9 @@ class state:
     ] = {}  # id -> threading.Event, present only while the network part can still be cancelled
     errors: dict[str, str] = {}  # id -> message
     sizes: dict[tuple[str, int], int] = {}  # (id, resolution) -> download bytes
+    categories: dict[
+        str, list[tuple[str, int]]
+    ] = {}  # asset type -> [(category, count)], fetched once per type
     cancelling: set[str] = set()  # cancelled in the UI; the old worker is still stopping and cleaning up
     restart: set[str] = (
         set()
@@ -265,12 +270,20 @@ def start_search(page=0, append=False):
     state.seq += 1
     seq = state.seq
     query, asset_type = wm.quixlend_query, wm.quixlend_type
+    category = wm.quixlend_category if asset_type != "ALL" and wm.quixlend_category != "ALL" else None
+    ids = sorted(state.local) if wm.quixlend_downloaded else None
+    if wm.quixlend_downloaded and not ids:  # an empty id list would mean "no filter"
+        state.hits, state.page, state.pages = [], 0, 1
+        state.status, state.loading = "Nothing downloaded yet", False
+        return
     state.status = "Searching…"
     state.loading = True
 
     def work():
         def attempt():
-            res = api.search(query, page, PER_PAGE, None if asset_type == "ALL" else asset_type)
+            res = api.search(
+                query, page, PER_PAGE, None if asset_type == "ALL" else asset_type, ids, category
+            )
             with ThreadPoolExecutor(8) as pool:
                 thumbs = list(pool.map(_thumb, res["hits"]))
             return res, thumbs
@@ -881,6 +894,7 @@ def _startup():
     ensure_asset_library()
     if session.logged_in:
         load_owned()
+        load_categories(wm_of(bpy.context).quixlend_type)
         start_search()
 
 
@@ -893,6 +907,39 @@ def _file_loaded(*_):
 
 
 def _search_update(self, context):
+    start_search()
+
+
+_category_items: list[tuple[str, str, str]] = []  # Blender keeps references into a dynamic enum's list
+
+
+def _category_items_for(self, context):
+    found = state.categories.get(self.quixlend_type, [])
+    _category_items[:] = [("ALL", "All Categories", "")] + [
+        (name, f"{name.title()} ({count})", "") for name, count in found
+    ]
+    return _category_items
+
+
+def load_categories(asset_type):
+    """Fetch the categories of a type once; the dropdown fills in when they arrive."""
+    if asset_type == "ALL" or asset_type in state.categories:
+        return
+    state.categories[asset_type] = []  # marks it as requested
+
+    def done(result, error):
+        if error:
+            state.categories.pop(asset_type, None)  # try again next time the type is picked
+        else:
+            state.categories[asset_type] = result
+        jobs.redraw()
+
+    jobs.run(lambda: http.retry(lambda: api.categories(asset_type)), done)
+
+
+def _type_update(self, context):
+    self["quixlend_category"] = 0  # back to "All Categories" without triggering a second search
+    load_categories(self.quixlend_type)
     start_search()
 
 
@@ -913,7 +960,14 @@ def register():
         bpy.utils.register_class(cls)
     wm = bpy.types.WindowManager
     wm.quixlend_query = StringProperty(name="Search", update=_search_update, options={"SKIP_SAVE"})  # pyright: ignore[reportAttributeAccessIssue]
-    wm.quixlend_type = EnumProperty(name="Type", items=TYPES, update=_search_update)  # pyright: ignore[reportAttributeAccessIssue]
+    wm.quixlend_type = EnumProperty(name="Type", items=TYPES, update=_type_update)  # pyright: ignore[reportAttributeAccessIssue]
+    wm.quixlend_category = EnumProperty(name="Category", items=_category_items_for, update=_search_update)  # pyright: ignore[reportAttributeAccessIssue]
+    wm.quixlend_downloaded = BoolProperty(  # pyright: ignore[reportAttributeAccessIssue]
+        name="Downloaded Only",
+        description="Show only assets you have already downloaded",
+        update=_search_update,
+        options={"SKIP_SAVE"},
+    )
     wm.quixlend_code = StringProperty(name="Authorization Code", options={"SKIP_SAVE"})  # pyright: ignore[reportAttributeAccessIssue]
     bpy.app.handlers.load_post.append(_file_loaded)
     bpy.types.ASSETBROWSER_MT_editor_menus.append(_asset_browser_header)  # pyright: ignore[reportArgumentType]
@@ -925,7 +979,7 @@ def unregister():
     bpy.app.handlers.load_post.remove(_file_loaded)
     bpy.types.ASSETBROWSER_MT_editor_menus.remove(_asset_browser_header)  # pyright: ignore[reportArgumentType]
     wm = bpy.types.WindowManager
-    del wm.quixlend_query, wm.quixlend_type, wm.quixlend_code  # pyright: ignore[reportAttributeAccessIssue]
+    del wm.quixlend_query, wm.quixlend_type, wm.quixlend_category, wm.quixlend_downloaded, wm.quixlend_code  # pyright: ignore[reportAttributeAccessIssue]
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)
     bpy.utils.previews.remove(_icons)

@@ -828,7 +828,10 @@ class QUIXLEND_PT_browser(bpy.types.Panel):
         row.operator("quixlend.search", text="", icon="FILE_REFRESH")
         row = layout.row(align=True)
         row.prop(wm, "quixlend_type", text="")
-        row.prop(ui.prefs(), "resolution", text="")
+        cat = row.row(align=True)
+        cat.enabled = wm.quixlend_type != "ALL"
+        cat.prop(wm, "quixlend_category", text="")
+        row.prop(wm, "quixlend_downloaded", text="", icon="DISK_DRIVE")
         row = layout.row()
         row.label(text=ui.state.status or "Browse the Megascans catalog", icon="ASSET_MANAGER")
 

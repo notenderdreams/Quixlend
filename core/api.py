@@ -30,17 +30,27 @@ COMPONENTS = [
 ]
 
 
-def search(query="", page=0, per_page=48, asset_type=None, ids=None):
-    """Catalog search. `ids` restricts to those asset ids (owned-only view)."""
+def search(query="", page=0, per_page=48, asset_type=None, ids=None, category=None):
+    """Catalog search. `ids` restricts to those asset ids; `category` to one category of the type."""
     body = {"query": query, "page": page, "hitsPerPage": per_page}
     filters = []
     if asset_type:
         filters.append(f'type:"{asset_type}"')
+    if category:
+        filters.append('category:"' + category.replace('"', "") + '"')
     if ids:
         filters.append("(" + " OR ".join(f"objectID:{i}" for i in ids) + ")")
     if filters:
         body["filters"] = " AND ".join(filters)
     return http.post(ALGOLIA_URL, body, ALGOLIA_HEADERS)
+
+
+def categories(asset_type):
+    """[(category, asset count)] of one asset type, biggest first."""
+    body = {"query": "", "hitsPerPage": 0, "facets": ["category"], "maxValuesPerFacet": 60}
+    body["filters"] = f'type:"{asset_type}"'
+    counts = http.post(ALGOLIA_URL, body, ALGOLIA_HEADERS).get("facets", {}).get("category", {})
+    return sorted(counts.items(), key=lambda kv: -kv[1])
 
 
 class Client:
