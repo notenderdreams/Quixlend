@@ -13,6 +13,7 @@ class TestServer:
         self.truncate = set()  # request numbers answered with half a body
         self.delay = 0.0  # seconds to wait before answering
         self.bps: int | None = None  # throttle each response body to this many bytes per second
+        self.stall = 0.0  # seconds to hang halfway through each response body
         self.deny = 0  # answer 403 to this many requests first
         self.token: str | None = (
             None  # when set, only URLs carrying ?t=<token> are valid; others get 403 (expired links)
@@ -85,6 +86,11 @@ class TestServer:
             h.send_header(k, v)
         h.end_headers()
         out = body[: len(body) // 2] if number in self.truncate else body
+        if self.stall:
+            h.wfile.write(out[: len(out) // 2])
+            h.wfile.flush()
+            time.sleep(self.stall)
+            out = out[len(out) // 2 :]
         if self.bps:
             step = max(1, int(self.bps / 20))  # 20 slices a second
             for i in range(0, len(out), step):

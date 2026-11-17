@@ -372,6 +372,22 @@ class Cancel(unittest.TestCase):
         self.assertEqual(self.leftovers(), [])
         self.assertFalse((self.dest / "a/big.bin").exists())
 
+    def test_cancel_interrupts_a_stalled_read(self):
+        cancel = threading.Event()
+        with TestServer(FILES) as server:
+            server.stall = (
+                30  # every body hangs halfway: no bytes arrive, so only closing the socket can end the wait
+            )
+            thread, outcome = self.start(server, cancel, workers=2)
+            time.sleep(0.5)
+            began = time.time()
+            cancel.set()
+            thread.join(5)
+            self.assertFalse(thread.is_alive())
+            self.assertLess(time.time() - began, 2)
+        self.assertIsInstance(outcome[0], download.Cancelled)
+        self.assertEqual(self.leftovers(), [])
+
     def test_cancelled_is_not_a_failure(self):
         self.assertFalse(issubclass(download.Cancelled, download.DownloadError))
         self.assertEqual(download.reason(download.Cancelled()), "Cancelled")
@@ -500,3 +516,16 @@ class DiskSpace(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Resolutions(unittest.TestCase):
+    def test_resolution_is_the_largest_K_token_in_file_names(self):
+        paths = [Path("a/x_2K_Albedo.jpg"), Path("a/x_4K_Normal_LOD0.jpg"), Path("a/x_LOD0.fbx")]
+        self.assertEqual(download.resolution_of(paths), 4096)
+
+    def test_no_token_means_unknown(self):
+        self.assertIsNone(download.resolution_of([Path("a/x_LOD0.fbx"), Path("a/_Thumb.jpg")]))
+
+    def test_stale_files_are_maps_of_another_resolution(self):
+        paths = [Path("x_1K_Albedo.jpg"), Path("x_4K_Albedo.jpg"), Path("x_LOD0.fbx"), Path("x.blend")]
+        self.assertEqual(download.stale_maps(paths, 4096), [Path("x_1K_Albedo.jpg")])

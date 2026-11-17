@@ -214,7 +214,7 @@ def load_owned():
 # ---- search ----------------------------------------------------------------
 
 
-def _big_preview(hit):
+def big_preview(hit):
     """Path of the large preview image, downloaded once."""
     path = HOME / "thumbs" / f"{hit['id']}_big.jpg"
     if not path.exists():
@@ -326,9 +326,13 @@ class QUIXLEND_OT_download(bpy.types.Operator):
     bl_label = "Download"
     bl_description = "Download this asset and add it to the Asset Browser"
     asset_id: StringProperty()  # pyright: ignore[reportInvalidTypeForm]
+    replace: BoolProperty(  # pyright: ignore[reportInvalidTypeForm]
+        default=False, description="Download again at the chosen resolution, replacing the textures"
+    )
 
     def execute(self, context: bpy.types.Context) -> Result:
         asset_id, root = self.asset_id, library()
+        replacing = self.replace and asset_id in state.local
         if asset_id in state.progress or asset_id in state.restart:
             return {"FINISHED"}  # already queued, downloading or building
         if asset_id in state.cancelling:
@@ -338,6 +342,10 @@ class QUIXLEND_OT_download(bpy.types.Operator):
         resolution, blender = int(prefs().resolution), bpy.app.binary_path
         state.progress[asset_id] = 0.0
         state.errors.pop(asset_id, None)
+        if replacing:
+            state.local.discard(
+                asset_id
+            )  # the card shows progress; the old build stays on disk until the new one works
         stop = state.cancel[asset_id] = threading.Event()
 
         def progress(done_bytes, total):
@@ -353,7 +361,7 @@ class QUIXLEND_OT_download(bpy.types.Operator):
             payload = api.build_payload(asset, resolution)
             dest = download.asset_dir(root, asset)
             plan = lambda: download.plan(client.request_download(payload), dest)
-            download.fetch_all(
+            files = download.fetch_all(
                 plan(),
                 progress,
                 refresh=plan,
@@ -362,31 +370,48 @@ class QUIXLEND_OT_download(bpy.types.Operator):
                     asset_id in state.cancelling or state.speed.__setitem__(asset_id, (bps, eta))
                 ),
             )
-            return dest
+            return dest, download.resolution_of(files)
 
-        def build(dest):
+        def build(dest, res):
             thumb = HOME / "thumbs" / f"{asset_id}.jpg"  # Quixel's own catalog thumbnail
             if thumb.exists():
                 shutil.copyfile(thumb, dest / "_Thumb.jpg")
             proc = subprocess.run(
-                [blender, "-b", "--factory-startup", "--python", BUILD_SCRIPT, "--", str(dest), str(root)],
+                [
+                    blender,
+                    "-b",
+                    "--factory-startup",
+                    "--python",
+                    BUILD_SCRIPT,
+                    "--",
+                    str(dest),
+                    str(root),
+                    *([str(res)] if res else []),
+                ],
                 capture_output=True,
                 text=True,
             )
             if "QUIXLEND_BUILT" not in proc.stdout:
                 raise RuntimeError((proc.stderr or proc.stdout).strip().splitlines()[-1])
+            if res:  # the new build no longer needs the textures of the resolution it replaces
+                for old in download.stale_maps([p for p in dest.rglob("*") if p.is_file()], res):
+                    old.unlink(missing_ok=True)
 
         def settle(error):
             state.progress.pop(asset_id, None)
             state.speed.pop(asset_id, None)
             state.cancelling.discard(asset_id)
             try:
+                if error and replacing:
+                    state.local.add(asset_id)  # the old build is still intact
                 if isinstance(error, download.Cancelled):
                     return  # not a failure: no error on the card
                 if error:
                     state.errors[asset_id] = download.reason(error)
                     return
                 state.local.add(asset_id)
+                if replacing:
+                    reload_templates(asset_id)
                 measure_library()
                 refresh_asset_browsers()
             finally:
@@ -399,7 +424,7 @@ class QUIXLEND_OT_download(bpy.types.Operator):
                     )
 
         def run(finished):
-            def fetched(dest, error):
+            def fetched(result, error):
                 try:
                     state.cancel.pop(asset_id, None)  # nothing left to cancel
                     if not error and stop.is_set():
@@ -408,7 +433,7 @@ class QUIXLEND_OT_download(bpy.types.Operator):
                         settle(error)
                         return
                     state.building.add(asset_id)
-                    jobs.run(lambda: build(dest), built)
+                    jobs.run(lambda: build(*result), built)
                 finally:
                     finished()  # network part over: the next queued download starts while this one builds
 
@@ -443,6 +468,12 @@ def cancel_download(asset_id):
     jobs.redraw()
 
 
+def local_resolution(asset_id) -> int | None:
+    """Texture size in pixels of a downloaded asset, read from its file names."""
+    folder = next((library() / "Quixlend").glob(f"*/{asset_id}"), None)
+    return download.resolution_of(p for p in folder.rglob("*") if p.is_file()) if folder else None
+
+
 def load_templates(asset_id):
     """(objects, materials) of a downloaded asset, loaded once and reused; (None, None) if the file is missing."""
     blend = next((library() / "Quixlend").glob(f"*/{asset_id}/{asset_id}.blend"), None)
@@ -462,6 +493,47 @@ def load_templates(asset_id):
             obj["quixlend_source"] = True  # pristine template, never linked to a scene
             obj.use_fake_user = True
     return objects, materials
+
+
+def reload_templates(asset_id):
+    """After a rebuild: swap datablocks loaded from the old .blend for the new ones; objects keep their material."""
+    old_m = sorted((m for m in bpy.data.materials if m.get("quixlend_id") == asset_id), key=lambda m: m.name)
+    old_o = [o for o in bpy.data.objects if o.get("quixlend_id") == asset_id and o.get("quixlend_source")]
+    if not (old_m or old_o):
+        return  # never loaded this session: the next use loads the new file
+    names = [m.name for m in old_m]
+    groups = {
+        cast(bpy.types.ShaderNodeGroup, n).node_tree
+        for m in old_m
+        if m.node_tree
+        for n in m.node_tree.nodes
+        if n.bl_idname == "ShaderNodeGroup"
+    }
+    groups = {g for g in groups if g}
+    images = {
+        cast(bpy.types.ShaderNodeTexImage, n).image
+        for g in groups
+        for n in g.nodes
+        if n.bl_idname == "ShaderNodeTexImage"
+    }
+    for block in (*old_m, *old_o):
+        del block["quixlend_id"]  # or load_templates would find them instead of loading the new file
+    _, loaded = load_templates(asset_id)
+    new_m = sorted(loaded or [], key=lambda m: m.name)
+    for old, new in zip(old_m, new_m):
+        old.user_remap(new)
+    for old in old_m:
+        bpy.data.materials.remove(old)
+    for obj in old_o:
+        bpy.data.objects.remove(obj)
+    for new, name in zip(new_m, names):
+        new.name = name
+    for group in groups:
+        if group.users - group.use_fake_user == 0:  # the old build's node group; the new material has its own
+            bpy.data.node_groups.remove(group)
+    for image in images:
+        if image and image.users - image.use_fake_user == 0:
+            bpy.data.images.remove(image)
 
 
 def place(context, asset_id, location=None, target=None, pick=None):
@@ -523,7 +595,7 @@ def open_details(asset_id, window, area):
     hit = next(h for h in state.hits if h["id"] == asset_id)
 
     def work():
-        path = _big_preview(hit)
+        path = big_preview(hit)
         return path, state.assets.get(asset_id) or client.asset(asset_id)
 
     def done(result, error):
@@ -552,6 +624,7 @@ class QUIXLEND_OT_details(bpy.types.Operator):
         asset = state.assets.get(self.asset_id)
         self.info = api.asset_info(asset) if asset else [("Details unavailable", "")]
         self.size = download_size(self.asset_id, fetch=False)
+        self.have = local_resolution(self.asset_id) if self.asset_id in state.local else None
         return context.window_manager.invoke_popup(self, width=420)
 
     def draw(self, context: bpy.types.Context):
@@ -567,6 +640,16 @@ class QUIXLEND_OT_details(bpy.types.Operator):
             row = col.split(factor=0.3)
             row.label(text=key)
             row.label(text=value)
+        if self.have:
+            row = layout.row()
+            row.label(text=f"Downloaded at {self.have // 1024}K")
+            again = row.row()
+            again.enabled = self.have != int(prefs().resolution)
+            op = again.operator(
+                "quixlend.download", text=f"Re-download at {res_label()}", icon="FILE_REFRESH"
+            )
+            assert op is not None
+            op.asset_id, op.replace = self.asset_id, True  # pyright: ignore[reportAttributeAccessIssue]
 
     def execute(self, context: bpy.types.Context) -> Result:
         return {"FINISHED"}

@@ -14,7 +14,7 @@ from typing import Any, Literal, cast
 
 import bpy
 
-MAP_RE = re.compile(r"_(?:\d+K_)?([A-Za-z]+?)(?:_LOD(\d+))?\.(jpe?g|png|exr)$", re.I)
+MAP_RE = re.compile(r"_(?:(\d+)K_)?([A-Za-z]+?)(?:_LOD(\d+))?\.(jpe?g|png|exr)$", re.I)
 MESH_RE = re.compile(r"(?:_|^)LOD(\d+)[^/]*\.fbx$", re.I)
 CATALOG_NS = uuid.UUID("5f1d3c1e-6c2b-4b8e-9a51-51a1e0b7c0de")
 TYPE_LABEL = {
@@ -26,15 +26,16 @@ TYPE_LABEL = {
 }
 
 
-def find_maps(folder, lod=None):
-    """{role: path}. Prefers the texture baked for `lod`, then un-suffixed, and EXR for displacement."""
+def find_maps(folder, lod=None, res=None):
+    """{role: path}. Prefers size `res` (pixels), the texture baked for `lod`, then un-suffixed, and EXR for displacement."""
     best = {}
     for path in sorted(folder.rglob("*")):
         m = MAP_RE.search(path.name)
         if not m or "preview" in path.name.lower() or "billboard" in str(path.parent).lower():
             continue
-        role, map_lod, ext = m.group(1).lower(), m.group(2), m.group(3).lower()
+        size, role, map_lod, ext = m.group(1), m.group(2).lower(), m.group(3), m.group(4).lower()
         score = (
+            res is not None and size is not None and int(size) * 1024 == res,
             map_lod is not None and lod is not None and int(map_lod) == lod,
             map_lod is None,
             ext == "exr" if role == "displacement" else ext != "exr",
@@ -302,7 +303,7 @@ def set_preview(datablock, folder):
     bpy.data.images.remove(img)
 
 
-def build(folder, library):
+def build(folder, library, res=None):
     folder, library = Path(folder), Path(library)
     meta_file = next(iter(sorted(folder.glob("*.json"))), None)
     meta = json.loads(meta_file.read_text()) if meta_file else {}
@@ -311,7 +312,7 @@ def build(folder, library):
     asset_type = (meta.get("categories") or [folder.parent.name])[0].lower()
 
     objects, lod = import_meshes(folder)
-    maps = find_maps(folder, lod)
+    maps = find_maps(folder, lod, res)
     if not maps:
         raise SystemExit(f"No texture maps found in {folder}")
 
@@ -350,4 +351,5 @@ def build(folder, library):
 
 
 if __name__ == "__main__":
-    build(*sys.argv[sys.argv.index("--") + 1 :][:2])
+    args = sys.argv[sys.argv.index("--") + 1 :]
+    build(args[0], args[1], int(args[2]) if len(args) > 2 else None)

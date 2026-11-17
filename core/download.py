@@ -1,12 +1,15 @@
 """Fetch the files of a /v1/downloads response into an asset folder. No bpy."""
 
 import collections
+import contextlib
 import itertools
 import json
 import os
 import queue
 import random
+import re
 import shutil
+import socket
 import threading
 import time
 import urllib.error
@@ -58,6 +61,20 @@ def reason(e):
     return str(e) or type(e).__name__
 
 
+_RES = re.compile(r"_(\d+)K_", re.I)
+
+
+def resolution_of(paths) -> int | None:
+    """Texture size in pixels (the largest `_<n>K_` file-name token), or None if there are no textures."""
+    sizes = [int(m.group(1)) * 1024 for p in paths if (m := _RES.search(Path(p).name))]
+    return max(sizes, default=None)
+
+
+def stale_maps(paths, resolution) -> list:
+    """Texture files of a resolution other than `resolution`: what a re-download leaves behind."""
+    return [p for p in paths if (m := _RES.search(Path(p).name)) and int(m.group(1)) * 1024 != resolution]
+
+
 def asset_dir(library, asset) -> Path:
     """<library>/Quixlend/<type>/<id> — kept apart from Bridge's own Downloaded/ tree."""
     return Path(library) / "Quixlend" / asset["categories"][0].lower() / asset["id"]
@@ -97,6 +114,12 @@ def _get(uri, start=None, end=None):
     if start is not None:
         headers["Range"] = f"bytes={start}-{end}"
     return urllib.request.urlopen(urllib.request.Request(uri, headers=headers), timeout=60)
+
+
+def _abort(res):
+    """Wake a thread blocked reading `res`: shut its socket down so the read returns at once."""
+    with contextlib.suppress(Exception):  # internals of http.client; if they move, cancel is just slower
+        res.fp.raw._sock.shutdown(socket.SHUT_RDWR)
 
 
 def _copy(res, f, on_bytes):
@@ -230,6 +253,30 @@ def fetch_all(files, progress=None, workers=8, refresh=None, cancel=None, speed=
 
     rate = _Rate()
     rate.start(0)
+    live, live_lock, over = set(), threading.Lock(), threading.Event()  # open responses; fetch_all finished
+
+    @contextlib.contextmanager
+    def opened(uri, start=None, end=None):
+        """_get, remembered so a cancel can cut the connection instead of waiting for the next byte."""
+        res = _get(uri, start, end)
+        with live_lock:
+            live.add(res)
+        if cancel.is_set():
+            _abort(res)
+        try:
+            with res:
+                yield res
+        finally:
+            with live_lock:
+                live.discard(res)
+
+    def watch():
+        while not over.wait(0.1):
+            if cancel.is_set():
+                with live_lock:
+                    for res in list(live):
+                        _abort(res)
+                return
 
     def on_bytes(n):
         with lock:
@@ -270,6 +317,8 @@ def fetch_all(files, progress=None, workers=8, refresh=None, cancel=None, speed=
                 if isinstance(e, urllib.error.HTTPError):
                     e.close()
                 on_bytes(-counted[0])
+                if cancel.is_set() and not isinstance(e, Cancelled):
+                    raise Cancelled from e  # a cut connection looks like a failure; it is the cancel
                 if isinstance(e, urllib.error.HTTPError) and e.code == 403 and renew(seen):
                     continue
                 if tries >= len(RETRY_DELAYS) or not retryable(e):
@@ -281,14 +330,14 @@ def fetch_all(files, progress=None, workers=8, refresh=None, cancel=None, speed=
         todo.put((-priority, next(seq), job))
 
     def stream(f, on_bytes):
-        with _get(f.uri) as res, open(f.part, "wb") as out:
+        with opened(f.uri) as res, open(f.part, "wb") as out:
             got = _copy(res, out, on_bytes)
         if f.size and got < f.size:
             raise ShortRead(f"{f.path.name}: got {got} bytes, expected {f.size}")
         f.finish()
 
     def chunk(f, start, end, on_bytes):
-        with _get(f.uri, start, end) as res:
+        with opened(f.uri, start, end) as res:
             if res.status != 206:
                 raise DownloadError(f"{f.path.name}: server ignored the byte range")
             with open(f.part, "r+b") as out:
@@ -302,7 +351,7 @@ def fetch_all(files, progress=None, workers=8, refresh=None, cancel=None, speed=
     def first(f, on_bytes):
         """First chunk doubles as the range probe: a 206 means the rest can be fetched in parallel."""
         end = min(CHUNK, f.size) - 1
-        with _get(f.uri, 0, end) as res:
+        with opened(f.uri, 0, end) as res:
             if res.status != 206:  # no range support: this response is the whole file
                 with open(f.part, "wb") as out:
                     got = _copy(res, out, on_bytes)
@@ -371,6 +420,7 @@ def fetch_all(files, progress=None, workers=8, refresh=None, cancel=None, speed=
     if needed and files and needed + MARGIN > free_space(files[0][1].parent):
         raise DiskFull("Not enough disk space")
     rate.start(done[0])  # bytes already on disk from an earlier attempt are not transfer speed
+    threading.Thread(target=watch, daemon=True).start()
     threads = [threading.Thread(target=worker, daemon=True) for _ in range(workers)]
     for t in threads:
         t.start()
@@ -379,6 +429,7 @@ def fetch_all(files, progress=None, workers=8, refresh=None, cancel=None, speed=
         todo.put((1, 0, None))  # sentinels sort after every real job
     for t in threads:
         t.join()
+    over.set()
     if cancel.is_set():
         for f in started:  # unfinished files leave nothing behind
             if not f.path.exists():
