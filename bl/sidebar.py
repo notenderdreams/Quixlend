@@ -139,10 +139,55 @@ def draw_grid():
     gpu.state.blend_set("NONE")
 
 
+batches = {}  # (asset id, object name) -> GPU line batch of the mesh edges in object space
+
+
+def preview(asset_id, max_edges=60000):
+    """Pick the mesh variation that will be placed and build its wireframe once; None for materials/brushes."""
+    objects, _ = ui.load_templates(asset_id)
+    if not objects:
+        return None
+    obj = random.choice(sorted(objects, key=lambda o: o.name))
+    key = (asset_id, obj.name)
+    if key not in batches:
+        import numpy as np
+        mesh = obj.data
+        co = np.empty(len(mesh.vertices) * 3, np.float32)
+        mesh.vertices.foreach_get("co", co)
+        ed = np.empty(len(mesh.edges) * 2, np.int32)
+        mesh.edges.foreach_get("vertices", ed)
+        ed = ed.reshape(-1, 2)
+        if len(ed) > max_edges:
+            ed = ed[:: math.ceil(len(ed) / max_edges)]
+        shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+        batches[key] = batch_for_shader(shader, "LINES", {"pos": co.reshape(-1, 3)[ed.ravel()]})
+    return {"name": obj.name, "batch": batches[key], "basis": obj.matrix_basis.copy()}
+
+
+def draw_drag_3d():
+    """The mesh as it will be placed: real size, rotation and position, drawn in the viewport."""
+    if not drag or not drag.get("wire") or not drag.get("loc"):
+        return
+    matrix = drag["wire"]["basis"].copy()
+    matrix.translation = drag["loc"]  # place() only overrides the location
+    shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+    shader.uniform_float("color", (*_colors()["accent"][:3], 1.0))
+    gpu.state.blend_set("ALPHA")
+    gpu.state.depth_test_set("NONE")
+    gpu.state.line_width_set(1.0)
+    gpu.matrix.push()
+    gpu.matrix.multiply_matrix(matrix)
+    drag["wire"]["batch"].draw(shader)
+    gpu.matrix.pop()
+    gpu.state.blend_set("NONE")
+
+
 def draw_drag():
-    """Thumbnail following the mouse; registered for both the sidebar and the viewport region."""
+    """Thumbnail following the mouse (materials, or a mesh not over the viewport); sidebar and viewport."""
     if not drag or not drag["hit"]["image"]:
         return
+    if drag["wire"] and drag["loc"]:
+        return  # drawn in 3D by draw_drag_3d
     region, size = bpy.context.region, 72 * scale()
     gpu.state.blend_set("ALPHA")
     _image(drag["hit"]["image"], drag["x"] - region.x - size / 2, drag["y"] - region.y - size / 2, size, size)
@@ -190,13 +235,19 @@ class QUIXLEND_OT_card(bpy.types.Operator):
         if event.type == "MOUSEMOVE":
             moved = abs(event.mouse_x - self.start[0]) + abs(event.mouse_y - self.start[1])
             if drag or (asset_id in st.local and moved > 6 * scale()):
-                drag = {"hit": self.hit, "x": event.mouse_x, "y": event.mouse_y}
+                if not drag:
+                    drag = {"hit": self.hit, "wire": preview(asset_id), "loc": None}
+                drag.update(x=event.mouse_x, y=event.mouse_y)
+                if drag["wire"]:
+                    found = self.locate(context, event)
+                    drag["loc"] = found[0] if found else None
                 self.area.tag_redraw()
         elif event.type == "LEFTMOUSE" and event.value == "RELEASE":
             if drag:
+                chosen = drag["wire"]["name"] if drag["wire"] else None
                 drag = None
                 self.area.tag_redraw()
-                self.drop(context, event)
+                self.drop(context, event, chosen)
             elif asset_id not in st.local and asset_id not in st.progress and (st.owned is None or asset_id in st.owned):
                 bpy.ops.quixlend.download(asset_id=asset_id)
             return {"FINISHED"}
@@ -206,14 +257,15 @@ class QUIXLEND_OT_card(bpy.types.Operator):
             return {"CANCELLED"}
         return {"RUNNING_MODAL"}
 
-    def drop(self, context, event):
-        """Place the asset under the mouse: on the surface hit, else on the ground plane."""
+    def locate(self, context, event):
+        """(location, target object or None) under the mouse: the surface hit, else the ground plane;
+        None when the mouse is outside the viewport or over the sidebar."""
         region = next(r for r in self.area.regions if r.type == "WINDOW")
         x, y = event.mouse_x - region.x, event.mouse_y - region.y
         sidebar = next(r for r in self.area.regions if r.type == "UI")
         over_sidebar = sidebar.x <= event.mouse_x <= sidebar.x + sidebar.width
         if over_sidebar or not (0 <= x <= region.width and 0 <= y <= region.height):
-            return  # released outside the viewport: cancel
+            return None
         rv3d = self.area.spaces.active.region_3d
         origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, (x, y))
         direction = view3d_utils.region_2d_to_vector_3d(region, rv3d, (x, y))
@@ -222,8 +274,18 @@ class QUIXLEND_OT_card(bpy.types.Operator):
             target = None
             location = intersect_line_plane(origin, origin + direction, (0, 0, 0), (0, 0, 1)) \
                 or context.scene.cursor.location
+        return location, target
+
+    def drop(self, context, event, chosen):
+        """Place the asset exactly where the preview was: same variation, same spot."""
+        found = self.locate(context, event)
+        if not found:
+            return  # released outside the viewport: cancel
+        location, target = found
+        region = next(r for r in self.area.regions if r.type == "WINDOW")
+        pick = (lambda sources: next((o for o in sources if o.name == chosen), sources[0])) if chosen else random.choice
         with context.temp_override(area=self.area, region=region):
-            message = ui.place(context, self.hit["id"], location, target, pick=random.choice)
+            message = ui.place(context, self.hit["id"], location, target, pick=pick)
         if message:
             self.report({"WARNING"}, message)
 
@@ -237,7 +299,8 @@ def register():
     space = bpy.types.SpaceView3D
     _handles.extend([(space.draw_handler_add(draw_grid, (), "UI", "POST_PIXEL"), "UI"),
                      (space.draw_handler_add(draw_drag, (), "UI", "POST_PIXEL"), "UI"),
-                     (space.draw_handler_add(draw_drag, (), "WINDOW", "POST_PIXEL"), "WINDOW")])
+                     (space.draw_handler_add(draw_drag, (), "WINDOW", "POST_PIXEL"), "WINDOW"),
+                     (space.draw_handler_add(draw_drag_3d, (), "WINDOW", "POST_VIEW"), "WINDOW")])
     keyconfig = bpy.context.window_manager.keyconfigs.addon
     if keyconfig:  # absent in background mode
         keymap = keyconfig.keymaps.new(name="3D View Generic", space_type="VIEW_3D")

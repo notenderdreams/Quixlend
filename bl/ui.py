@@ -203,13 +203,11 @@ class QUIXLEND_OT_download(bpy.types.Operator):
         return {"FINISHED"}
 
 
-def place(context, asset_id, location=None, target=None, pick=None):
-    """Put a downloaded asset in the scene. Meshes go to `location` (default: 3D cursor);
-    materials go on `target` (default: selected objects). Returns a warning message or None.
-    `pick` chooses one of several plant variations; without it all are laid out in a row."""
+def load_templates(asset_id):
+    """(objects, materials) of a downloaded asset, loaded once and reused; (None, None) if the file is missing."""
     blend = next((library() / "Quixlend").glob(f"*/{asset_id}/{asset_id}.blend"), None)
     if not blend:
-        return "Asset file is missing; download it again"
+        return None, None
     # Reuse datablocks from an earlier placement instead of appending duplicates.
     objects = [o for o in bpy.data.objects if o.get("quixlend_id") == asset_id and o.get("quixlend_source")]
     materials = [m for m in bpy.data.materials if m.get("quixlend_id") == asset_id]
@@ -223,6 +221,16 @@ def place(context, asset_id, location=None, target=None, pick=None):
         for obj in objects:
             obj["quixlend_source"] = True  # pristine template, never linked to a scene
             obj.use_fake_user = True
+    return objects, materials
+
+
+def place(context, asset_id, location=None, target=None, pick=None):
+    """Put a downloaded asset in the scene. Meshes go to `location` (default: 3D cursor);
+    materials go on `target` (default: selected objects). Returns a warning message or None.
+    `pick` chooses one of several plant variations; without it all are laid out in a row."""
+    objects, materials = load_templates(asset_id)
+    if objects is None:
+        return "Asset file is missing; download it again"
 
     if objects:
         sources = sorted(objects, key=lambda o: o.name)
