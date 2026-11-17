@@ -709,25 +709,41 @@ class QUIXLEND_OT_copy_group(bpy.types.Operator):
         _, materials = load_templates(self.asset_id)
         tree = materials[0].node_tree if materials else None
         group = next((n for n in tree.nodes if n.bl_idname == "ShaderNodeGroup"), None) if tree else None
-        area = context.area
-        if not (tree and group and area):
+        window = context.window
+        if not (tree and group and window):
             self.report({"WARNING"}, "Nothing to copy; download the asset again")
             return {"CANCELLED"}
         for n in tree.nodes:
             n.select = n == group
-        old = area.type
-        area.type = (
-            "NODE_EDITOR"  # node.clipboard_copy only runs inside a node editor; borrow this area briefly
+        # node.clipboard_copy only runs inside a node editor, so one is borrowed for a moment. Never a 3D viewport:
+        # changing its type tears down its render session and Cycles would restart.
+        areas = [a for a in window.screen.areas if a.type != "VIEW_3D"]
+        area = next((a for a in areas if a.type == "NODE_EDITOR"), None) or min(
+            areas, key=lambda a: a.width * a.height, default=context.area
         )
+        if area is None:
+            self.report({"WARNING"}, "No editor to borrow for copying")
+            return {"CANCELLED"}
+        old = area.type
+        area.type = "NODE_EDITOR"
+        space = cast(bpy.types.SpaceNodeEditor, area.spaces.active)
+        before = (
+            space.tree_type,
+            space.pin,
+            space.node_tree,
+        )  # an editor that was already open keeps its state
         try:
-            space = cast(bpy.types.SpaceNodeEditor, area.spaces.active)
             space.tree_type = "ShaderNodeTree"
             space.pin = True
             space.node_tree = tree
             region = next(r for r in area.regions if r.type == "WINDOW")
-            with context.temp_override(area=area, region=region, space_data=space):
+            with context.temp_override(window=window, area=area, region=region, space_data=space):
                 bpy.ops.node.clipboard_copy()
         finally:
+            space.pin, space.node_tree = False, None
+            space.tree_type = before[0]
+            if before[1]:
+                space.pin, space.node_tree = before[1], before[2]
             area.type = old
         self.report({"INFO"}, "Copied node group; paste with Ctrl+V in a shader editor")
         return {"FINISHED"}
