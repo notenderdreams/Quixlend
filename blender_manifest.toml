@@ -1,0 +1,14 @@
+schema_version = "1.0.0"
+
+id = "quixlend"
+version = "0.1.0"
+name = "Quixlend"
+tagline = "Search and download your Megascans assets into the Asset Browser"
+maintainer = "Nahian (notenderdreams)"
+type = "add-on"
+blender_version_min = "5.2.0"
+license = ["SPDX:MIT"]
+
+[permissions]
+network = "Sign in to Quixel, search the catalog, download owned assets"
+files = "Write downloaded assets into the Megascans library folder"
