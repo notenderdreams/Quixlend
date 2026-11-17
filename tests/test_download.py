@@ -385,5 +385,49 @@ class Cancel(unittest.TestCase):
             self.assertEqual((self.dest / p).read_bytes(), data)
 
 
+class Speed(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dest = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_speed_and_eta_follow_a_throttled_server(self):
+        files = {"a/big.bin": os.urandom(450_000)}
+        rate, estimates = 150_000, []
+        with TestServer(files) as server:
+            server.bps = rate
+            started = time.monotonic()
+            download.fetch_all([(server.url("a/big.bin"), self.dest / "a/big.bin", 450_000)], workers=1,
+                               speed=lambda bps, eta: estimates.append((time.monotonic() - started, bps, eta)))
+        early = [e for e in estimates if e[0] < 0.9]
+        self.assertTrue(all(bps is None and eta is None for _, bps, eta in early))  # nothing nonsensical at the start
+        settled = [(bps, eta, t) for t, bps, eta in estimates if bps]
+        self.assertTrue(settled)
+        bps, eta, t = settled[len(settled) // 2]
+        self.assertAlmostEqual(bps, rate, delta=rate * 0.4)
+        self.assertAlmostEqual(eta, 3.0 - t, delta=1.0)  # 450 KB at 150 KB/s takes about 3 s
+
+    def test_progress_callback_still_works_on_its_own(self):
+        seen = []
+        with TestServer(FILES) as server:
+            download.fetch_all(plan(server, self.dest), lambda done, total: seen.append(done))
+        self.assertEqual(seen[-1], sum(map(len, FILES.values())))
+
+    def test_bytes_already_on_disk_do_not_count_as_speed(self):
+        rate = download._Rate()
+        download._now, clock = (lambda: clock_value[0]), None
+        clock_value = [0.0]
+        try:
+            rate.start(1_000_000)  # a resumed download starts with a megabyte already present
+            clock_value[0] = 2.0
+            bps, eta = rate.update(1_100_000, 2_000_000)
+        finally:
+            download._now = time.monotonic
+        self.assertAlmostEqual(bps, 50_000)
+        self.assertAlmostEqual(eta, 900_000 / 50_000)
+
+
 if __name__ == "__main__":
     unittest.main()

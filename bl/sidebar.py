@@ -150,10 +150,26 @@ def _lift(c, amount):
     return (*(a + (1 - a) * amount for a in c[:3]), c[3])
 
 
+def _duration(seconds):
+    seconds = int(seconds + 0.5)
+    return f"{seconds}s" if seconds < 60 else f"{seconds // 60}m {seconds % 60:02d}s" if seconds < 3600 else f"{seconds // 3600}h {seconds % 3600 // 60:02d}m"
+
+
+def _progress_label(asset_id):
+    """Longest-first variants, e.g. '45% - 42 MB/s - 8s left'; _draw_button keeps the first that fits."""
+    percent = f"{int(ui.state.progress[asset_id] * 100)}%"
+    bps, eta = ui.state.speed.get(asset_id, (None, None))
+    if not bps:
+        return percent
+    rate = f"{bps / 1e6:.0f} MB/s" if bps >= 10e6 else f"{bps / 1e6:.1f} MB/s" if bps >= 1e6 else f"{bps / 1e3:.0f} KB/s"
+    return [f"{percent} - {rate} - {_duration(eta)} left", f"{percent} - {rate}", percent] if eta is not None \
+        else [f"{percent} - {rate}", percent]
+
+
 def _main_label(asset_id, hit):
     st = ui.state
     if asset_id in st.progress:
-        return f"Downloading {int(st.progress[asset_id] * 100)}%"
+        return _progress_label(asset_id)
     if asset_id in st.local:
         return "Apply" if hit.get("type") in ("surface", "atlas") else "Import"
     if asset_id in st.errors:
@@ -210,6 +226,8 @@ def _draw_button(rect, label, fill, text, hovered, colors, progress=None, dropdo
         _rrect(x, y, max(w * progress, 2 * r), h, r, colors["accent"])
     size = 10 * scale()
     blf.size(0, size)
+    if isinstance(label, list):  # variants, longest first
+        label = next((v for v in label if blf.dimensions(0, v)[0] <= w - 8 * scale()), label[-1])
     tw = blf.dimensions(0, label)[0]
     _text(label, x + max(4 * scale(), (w - tw) / 2 - (5 * scale() if dropdown else 0)), y + (h - size) / 2 + 1.5 * scale(), size, text, w - 8 * scale())
 

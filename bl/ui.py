@@ -38,6 +38,7 @@ class state:
     owned = None    # set of asset ids, None until fetched
     local = set()   # ids already built into the library
     progress = {}   # id -> 0..1 while downloading
+    speed = {}      # id -> (bytes/s, seconds left) while downloading; None parts until known
     cancel = {}     # id -> threading.Event, present only while the network part can still be cancelled
     errors = {}     # id -> message
     sizes = {}      # (id, resolution) -> download bytes
@@ -247,7 +248,8 @@ class QUIXLEND_OT_download(bpy.types.Operator):
             dest = download.asset_dir(root, asset)
             plan = lambda: download.plan(client.request_download(payload), dest)
             try:
-                download.fetch_all(plan(), progress, refresh=plan, cancel=stop)
+                download.fetch_all(plan(), progress, refresh=plan, cancel=stop,
+                                   speed=lambda bps, eta: state.speed.__setitem__(asset_id, (bps, eta)))
             finally:
                 state.cancel.pop(asset_id, None)  # past the network part there is nothing left to cancel
             thumb = HOME / "thumbs" / f"{asset_id}.jpg"  # Quixel's own catalog thumbnail
@@ -260,6 +262,7 @@ class QUIXLEND_OT_download(bpy.types.Operator):
 
         def done(_, error):
             state.progress.pop(asset_id, None)
+            state.speed.pop(asset_id, None)
             if isinstance(error, download.Cancelled):
                 return  # not a failure: no error on the card
             if error:

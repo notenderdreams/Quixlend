@@ -1,5 +1,6 @@
 """Throwaway HTTP server for downloader tests. Behaviour is configured per test; every request is logged."""
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -10,6 +11,7 @@ class TestServer:
         self.fail = {}          # request number (1-based) -> status code to answer with
         self.truncate = set()   # request numbers answered with half a body
         self.delay = 0.0        # seconds to wait before answering
+        self.bps = None         # throttle each response body to this many bytes per second
         self.deny = 0           # answer 403 to this many requests first
         self.token = None       # when set, only URLs carrying ?t=<token> are valid; others get 403 (expired links)
         self.log = []           # [{"path", "range", "status", "conn"}]
@@ -44,7 +46,6 @@ class TestServer:
         return [r for r in self.log if path is None or r["path"] == path]
 
     def _handle(self, h):
-        import time
         with self._lock:
             number = len(self.log) + 1
             entry = {"path": h.path.lstrip("/").split("?")[0], "range": h.headers.get("Range"), "status": None,
@@ -76,6 +77,14 @@ class TestServer:
         for k, v in headers.items():
             h.send_header(k, v)
         h.end_headers()
-        h.wfile.write(body[:len(body) // 2] if number in self.truncate else body)
+        out = body[:len(body) // 2] if number in self.truncate else body
+        if self.bps:
+            step = max(1, int(self.bps / 20))  # 20 slices a second
+            for i in range(0, len(out), step):
+                h.wfile.write(out[i:i + step])
+                h.wfile.flush()
+                time.sleep(step / self.bps)
+        else:
+            h.wfile.write(out)
         if number in self.truncate:
             h.close_connection = True

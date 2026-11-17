@@ -1,4 +1,5 @@
 """Fetch the files of a /v1/downloads response into an asset folder. No bpy."""
+import collections
 import itertools
 import json
 import os
@@ -90,7 +91,7 @@ def _get(uri, start=None, end=None):
 
 def _copy(res, f, on_bytes):
     n = 0
-    while chunk := res.read(READ):
+    while chunk := res.read1(READ):
         f.write(chunk)
         n += len(chunk)
         on_bytes(len(chunk))
@@ -163,26 +164,57 @@ class _File:
             self.finish()
 
 
+_now = time.monotonic  # patchable clock
+
+
+class _Rate:
+    """Transfer speed over the last few seconds, and the time left at that speed."""
+    WINDOW = 3.0     # seconds of history that count
+    SETTLE = 1.0     # no estimate sooner than this after the start
+
+    def start(self, done):
+        self.t0 = _now()
+        self.samples = collections.deque([(self.t0, done)])
+
+    def update(self, done, total):
+        """-> (bytes per second, seconds left); each None until there is enough data."""
+        now = _now()
+        self.samples.append((now, done))
+        while len(self.samples) > 1 and self.samples[0][0] < now - self.WINDOW:
+            self.samples.popleft()
+        then, before = self.samples[0]
+        if now - then < 0.25 or now - self.t0 < self.SETTLE:
+            return None, None
+        bps = max(done - before, 0) / (now - then)
+        return bps, ((total - done) / bps if bps > 0 else None)
+
+
 MAX_REFRESHES = 2  # fresh sets of links requested per download before giving up
 
 
-def fetch_all(files, progress=None, workers=8, refresh=None, cancel=None):
+def fetch_all(files, progress=None, workers=8, refresh=None, cancel=None, speed=None):
     """Download planned files. Big files are split into parallel byte-range chunks, biggest first;
     a server that ignores ranges is streamed whole. progress(done_bytes, total_bytes) is called from
     worker threads. `refresh()`, if given, returns a new plan for the same files with fresh links; it is
     called when a link has expired (HTTP 403) and the interrupted work is retried with the new links.
-    Setting the `cancel` threading.Event stops the workers promptly, deletes the partial files and raises
+    `speed(bytes_per_second, seconds_left)`, if given, is called alongside progress with a smoothed
+    estimate (both None until there is enough data). Setting the `cancel` threading.Event stops the workers promptly, deletes the partial files and raises
     Cancelled."""
     cancel = cancel or threading.Event()
     links, renewed = {}, [0, threading.Lock()]  # path -> current uri; [refresh count, lock]
     total, done, lock = sum(size or 0 for _, _, size in files), [0], threading.Lock()
     todo, failure, seq = queue.PriorityQueue(), [], itertools.count()
 
+    rate = _Rate()
+    rate.start(0)
+
     def on_bytes(n):
         with lock:
             done[0] += n
             if progress:
                 progress(done[0], total)
+            if speed:
+                speed(*rate.update(done[0], total))
 
     def renew(seen):
         """New links after a 403; False once the refresh budget is spent. `seen` = refresh count the caller ran with."""
@@ -305,6 +337,7 @@ def fetch_all(files, progress=None, workers=8, refresh=None, cancel=None):
             for i in missing:
                 put(lambda f=f, i=i: attempt(lambda on: chunk(f, *f.span(i), on)), size)
 
+    rate.start(done[0])  # bytes already on disk from an earlier attempt are not transfer speed
     threads = [threading.Thread(target=worker, daemon=True) for _ in range(workers)]
     for t in threads:
         t.start()
