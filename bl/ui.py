@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import bpy
+import bpy.utils.previews
 from bpy.props import BoolProperty, EnumProperty, StringProperty
 
 from ..core import api, auth, download, http
@@ -16,6 +17,7 @@ ADDON = __package__.rpartition(".")[0]
 HOME = Path.home() / ".quixlend"  # shared with cli.py: one login for both
 BUILD_SCRIPT = str(Path(__file__).with_name("build.py"))
 PER_PAGE = 24
+_icons = None
 TYPES = [("ALL", "All Types", ""), ("3d", "3D Assets", ""), ("3dplant", "3D Plants", ""),
          ("surface", "Surfaces", ""), ("atlas", "Decals & Atlases", ""), ("brush", "Brushes", "")]
 
@@ -312,28 +314,40 @@ class QUIXLEND_PT_browser(bpy.types.Panel):
     bl_region_type = "UI"
     bl_category = "Quixlend"
 
+    def draw_header(self, context):
+        self.layout.label(text="", icon_value=_icons["quixel"].icon_id)
+
+    def draw_header_preset(self, context):
+        self.layout.popover(panel="QUIXLEND_PT_settings", text="", icon="PREFERENCES")
+
     def draw(self, context):
         layout, wm = self.layout, context.window_manager
+        layout.use_property_decorate = False
         if not session.logged_in:
-            col = layout.column()
-            col.operator("quixlend.login_open", text="1. Open Epic Login", icon="URL")
-            col.label(text="2. Paste the authorizationCode shown:")
-            col.prop(wm, "quixlend_code", text="")
-            col.operator("quixlend.login", text="3. Log In")
+            col = layout.column(align=True)
+            col.label(text="Your Megascans library", icon="ASSET_MANAGER")
+            col.label(text="Sign in with your Epic Games account.")
+            layout.separator()
+            layout.operator("quixlend.login_open", text="Sign In with Epic Games", icon="URL")
+            col = layout.column(align=True)
+            col.label(text="Paste the authorization code:")
+            col.prop(wm, "quixlend_code", text="", placeholder="Authorization code")
+            row = col.row()
+            row.enabled = bool(wm.quixlend_code.strip())
+            row.operator("quixlend.login", text="Connect Account", icon="CHECKMARK")
             if state.status:
-                col.label(text=state.status)
+                layout.label(text=state.status, icon="INFO")
             return
 
-        row = layout.row()
-        row.label(text=session.email, icon="USER")
-        row.operator("quixlend.logout", text="", icon="PANEL_CLOSE")
         row = layout.row(align=True)
-        row.prop(wm, "quixlend_query", text="", icon="VIEWZOOM")
+        row.scale_y = 1.2
+        row.prop(wm, "quixlend_query", text="", icon="VIEWZOOM", placeholder="Search Megascans")
         row.operator("quixlend.search", text="", icon="FILE_REFRESH")
         row = layout.row(align=True)
         row.prop(wm, "quixlend_type", text="")
         row.prop(prefs(), "resolution", text="")
-        layout.label(text=state.status or "Click to download, drag to place")
+        row = layout.row()
+        row.label(text=state.status or "Browse the Megascans catalog", icon="ASSET_MANAGER")
 
         # The cards are drawn by sidebar.draw_grid into this reserved empty space.
         from . import sidebar
@@ -342,12 +356,44 @@ class QUIXLEND_PT_browser(bpy.types.Panel):
         for _ in range(math.ceil(m["height"] / m["unit"])):
             blank.label(text="")
         state.panel_open = True
+        if not state.hits:
+            box = layout.box()
+            box.label(text="No matching assets" if state.status == "No results" else "Materials, models and plants",
+                      icon="VIEWZOOM")
+            box.label(text="Try another search or asset type." if state.status == "No results"
+                      else "Search by name or choose an asset type.")
         if state.page + 1 < state.pages:
-            layout.operator("quixlend.search", text="Load More").more = True
+            row = layout.row()
+            row.scale_y = 1.2
+            row.operator("quixlend.search", text="Show More Assets", icon="ADD").more = True
+        if state.hits:
+            col = layout.column(align=True)
+            col.enabled = False
+            col.label(text="Click to download · Drag to place", icon="MOUSE_LMB")
+
+
+class QUIXLEND_PT_settings(bpy.types.Panel):
+    bl_label = "Quixlend Settings"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Quixlend"
+    bl_options = {"INSTANCED"}
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        layout.label(text="Asset Library", icon="ASSET_MANAGER")
+        layout.prop(prefs(), "library")
+        layout.prop(prefs(), "resolution")
+        if session.logged_in:
+            layout.separator()
+            layout.label(text=session.email or "Epic Games account", icon="USER")
+            layout.operator("quixlend.logout", text="Sign Out", icon="QUIT")
 
 
 CLASSES = (QuixlendPreferences, QUIXLEND_OT_search, QUIXLEND_OT_download, QUIXLEND_OT_login_open,
-           QUIXLEND_OT_login, QUIXLEND_OT_logout, QUIXLEND_PT_browser)
+           QUIXLEND_OT_login, QUIXLEND_OT_logout, QUIXLEND_PT_settings, QUIXLEND_PT_browser)
 
 
 def _startup():
@@ -370,6 +416,9 @@ def _search_update(self, context):
 
 
 def register():
+    global _icons
+    _icons = bpy.utils.previews.new()
+    _icons.load("quixel", str(Path(__file__).parents[1] / "assets" / "quixel.png"), "IMAGE")
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     wm = bpy.types.WindowManager
@@ -381,11 +430,14 @@ def register():
 
 
 def unregister():
+    global _icons
     bpy.app.handlers.load_post.remove(_file_loaded)
     wm = bpy.types.WindowManager
     del wm.quixlend_query, wm.quixlend_type, wm.quixlend_code
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)
+    bpy.utils.previews.remove(_icons)
+    _icons = None
     for hit in state.hits:
         if hit["image"]:
             bpy.data.images.remove(hit["image"])

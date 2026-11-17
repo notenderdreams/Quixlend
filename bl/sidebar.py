@@ -16,11 +16,10 @@ from mathutils.geometry import intersect_line_plane
 from . import ui
 
 CATEGORY = "Quixlend"
-HEADER_UNITS = 6.3  # panel header + account/search/filter/status rows above the grid, in widget units
-CARD, HOVER, BAR = (0.16, 0.16, 0.18, 1), (0.26, 0.3, 0.42, 1), (0.1, 0.1, 0.11, 1)
-TEXT, DIM, OK, ERR, ACCENT = (0.92, 0.92, 0.92, 1), (0.6, 0.6, 0.62, 1), (0.45, 0.8, 0.5, 1), (0.95, 0.45, 0.4, 1), (0.3, 0.55, 1, 1)
+HEADER_UNITS = 5.5  # panel header + search/filter/status rows, in widget units
 
 drag = None  # {"hit", "x", "y"} in window coordinates while a card is being dragged
+hover = None  # (region pointer, asset id)
 
 
 def scale():
@@ -30,9 +29,9 @@ def scale():
 def metrics(region):
     """Grid geometry for a sidebar region; shared by the panel (to reserve space), drawing and hit-testing."""
     s = scale()
-    left, gap, label = 10 * s, 6 * s, 34 * s
-    width = region.width - left - 30 * s  # room for the tab strip and scrollbar on the right
-    cols = max(1, int((width + gap) // (104 * s + gap)))
+    left, gap, label = 10 * s, 8 * s, 38 * s
+    width = max(40 * s, region.width - left - 30 * s)  # tab strip and scrollbar
+    cols = max(1, int((width + gap) // (120 * s + gap)))
     card = (width - (cols - 1) * gap) / cols
     rows = math.ceil(len(ui.state.hits) / cols)
     return {"left": left, "gap": gap, "label": label, "cols": cols, "card": card,
@@ -86,17 +85,27 @@ def _text(text, x, y, size, color, max_width):
     blf.draw(0, text)
 
 
-def _status(asset_id):
+def _colors():
+    widgets = bpy.context.preferences.themes[0].user_interface
+    text = (*widgets.wcol_box.text, 1)
+    background = tuple(widgets.wcol_box.inner)
+    dim = tuple(a * 0.65 + b * 0.35 for a, b in zip(text, background))
+    return {"card": tuple(widgets.wcol_box.inner), "hover": tuple(widgets.wcol_list_item.inner_sel),
+            "text": text, "selected_text": (*widgets.wcol_list_item.text_sel, 1),
+            "dim": dim, "accent": tuple(widgets.wcol_progress.item)}
+
+
+def _status(asset_id, colors):
     st = ui.state
     if asset_id in st.progress:
-        return f"Downloading {int(st.progress[asset_id] * 100)}%", ACCENT
+        return f"Downloading {int(st.progress[asset_id] * 100)}%", colors["text"]
     if asset_id in st.errors:
-        return st.errors[asset_id], ERR
+        return f"Failed: {st.errors[asset_id]}", colors["text"]
     if asset_id in st.local:
-        return "Drag into scene", OK
+        return "Downloaded · Drag to place", colors["dim"]
     if st.owned is not None and asset_id not in st.owned:
-        return "Not owned", DIM
-    return "Click to download", DIM
+        return "Not in your library", colors["dim"]
+    return "Download", colors["dim"]
 
 
 def draw_grid():
@@ -106,20 +115,27 @@ def draw_grid():
     ui.state.panel_open = False  # set again by the panel on its next draw; stays off while collapsed
     s = scale()
     m, items = cells(region)
+    colors = _colors()
     gpu.state.blend_set("ALPHA")
     for hit, x, y in items:
         if y > region.height or y + m["card"] < -m["label"]:
             continue
         asset_id, card = hit["id"], m["card"]
-        _rect(x, y - m["label"], card, card + m["label"], HOVER if drag and drag["hit"] is hit else CARD)
+        selected = (drag and drag["hit"] is hit) or hover == (region.as_pointer(), asset_id)
+        _rect(x, y - m["label"], card, card + m["label"], colors["hover"] if selected else colors["card"])
         if hit["image"]:
-            _image(hit["image"], x + 2 * s, y + 2 * s, card - 4 * s, card - 4 * s)
+            image = hit["image"]
+            width, height = image.size
+            fit = (card - 4 * s) / max(width, height, 1)
+            w, h = width * fit, height * fit
+            _image(image, x + (card - w) / 2, y + (card - h) / 2, w, h)
         if asset_id in ui.state.progress:
-            _rect(x, y, card, 4 * s, BAR)
-            _rect(x, y, card * ui.state.progress[asset_id], 4 * s, ACCENT)
-        _text(hit["name"], x + 4 * s, y - 13 * s, 11 * s, TEXT, card - 8 * s)
-        status, color = _status(asset_id)
-        _text(status, x + 4 * s, y - 28 * s, 10 * s, color, card - 8 * s)
+            _rect(x, y, card, 3 * s, colors["card"])
+            _rect(x, y, card * ui.state.progress[asset_id], 3 * s, colors["accent"])
+        text_color = colors["selected_text"] if selected else colors["text"]
+        _text(hit["name"], x + 6 * s, y - 15 * s, 11 * s, text_color, card - 12 * s)
+        status, color = _status(asset_id, colors)
+        _text(status, x + 6 * s, y - 30 * s, 10 * s, text_color if selected else color, card - 12 * s)
     gpu.state.blend_set("NONE")
 
 
@@ -134,6 +150,22 @@ def draw_drag():
 
 
 # ---- mouse -----------------------------------------------------------------
+
+class QUIXLEND_OT_hover(bpy.types.Operator):
+    bl_idname = "quixlend.hover"
+    bl_label = "Highlight Asset"
+    bl_options = {"INTERNAL"}
+
+    def invoke(self, context, event):
+        global hover
+        region = context.region
+        hit = hit_at(region, event.mouse_region_x, event.mouse_region_y) if region and active(region) else None
+        current = (region.as_pointer(), hit["id"]) if hit else None
+        if current != hover:
+            hover = current
+            context.area.tag_redraw()
+        return {"PASS_THROUGH"}
+
 
 class QUIXLEND_OT_card(bpy.types.Operator):
     bl_idname = "quixlend.card"
@@ -200,6 +232,7 @@ _handles = []
 
 
 def register():
+    bpy.utils.register_class(QUIXLEND_OT_hover)
     bpy.utils.register_class(QUIXLEND_OT_card)
     space = bpy.types.SpaceView3D
     _handles.extend([(space.draw_handler_add(draw_grid, (), "UI", "POST_PIXEL"), "UI"),
@@ -209,15 +242,17 @@ def register():
     if keyconfig:  # absent in background mode
         keymap = keyconfig.keymaps.new(name="3D View Generic", space_type="VIEW_3D")
         keymap.keymap_items.new("quixlend.card", "LEFTMOUSE", "PRESS")
+        keymap.keymap_items.new("quixlend.hover", "MOUSEMOVE", "ANY")
 
 
 def unregister():
     keyconfig = bpy.context.window_manager.keyconfigs.addon
     if keyconfig and "3D View Generic" in keyconfig.keymaps:
         keymap = keyconfig.keymaps["3D View Generic"]
-        for item in [i for i in keymap.keymap_items if i.idname == "quixlend.card"]:
+        for item in [i for i in keymap.keymap_items if i.idname in {"quixlend.card", "quixlend.hover"}]:
             keymap.keymap_items.remove(item)
     for handle, region in _handles:
         bpy.types.SpaceView3D.draw_handler_remove(handle, region)
     _handles.clear()
     bpy.utils.unregister_class(QUIXLEND_OT_card)
+    bpy.utils.unregister_class(QUIXLEND_OT_hover)
