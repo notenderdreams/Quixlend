@@ -31,7 +31,7 @@ def metrics(region):
     s = scale()
     left, gap, label = 10 * s, 8 * s, 38 * s
     width = max(40 * s, region.width - left - 30 * s)  # tab strip and scrollbar
-    cols = max(1, int((width + gap) // (120 * s + gap)))
+    cols = max(1, int((width + gap) // (100 * s + gap)))
     card = (width - (cols - 1) * gap) / cols
     rows = math.ceil(len(ui.state.hits) / cols)
     return {"left": left, "gap": gap, "label": label, "cols": cols, "card": card,
@@ -122,7 +122,8 @@ def draw_grid():
             continue
         asset_id, card = hit["id"], m["card"]
         _rect(x, y - m["label"], card, card + m["label"], colors["card"])
-        if image := ui.thumb_image(hit):
+        _rect(x, y, card, card, (0, 0, 0, 1))
+        if image :=ui.thumb_image(hit):
             width, height = image.size
             fit = (card - 4 * s) / max(width, height, 1)
             w, h = width * fit, height * fit
