@@ -109,6 +109,17 @@ def _thumb(hit):
     return path
 
 
+def thumb_image(hit):
+    """Thumbnail datablock; undo/redo invalidates references, so look up by name and reload if gone."""
+    name = f".quixlend_{hit['id']}"  # leading dot hides it from image lists
+    image = bpy.data.images.get(name)
+    if image is None and hit.get("path") and Path(hit["path"]).exists():
+        image = bpy.data.images.load(hit["path"])
+        image.name = name
+        image.use_fake_user = True
+    return image
+
+
 def start_search(page=0, append=False):
     """Fetch a result page. Results of a search superseded by a newer one are dropped."""
     wm = bpy.context.window_manager
@@ -132,13 +143,11 @@ def start_search(page=0, append=False):
         res, thumbs = result
         if not append:
             for old in state.hits:
-                if old["image"]:
-                    bpy.data.images.remove(old["image"])
+                if img := bpy.data.images.get(f".quixlend_{old['id']}"):
+                    bpy.data.images.remove(img)
             state.hits = []
         for hit, path in zip(res["hits"], thumbs):
-            image = bpy.data.images.load(str(path))
-            image.name = f".quixlend_{hit['id']}"  # leading dot hides it from image lists
-            state.hits.append({"id": hit["id"], "name": hit["name"], "image": image})
+            state.hits.append({"id": hit["id"], "name": hit["name"], "path": str(path)})
         state.page, state.pages = page, res["nbPages"]
         state.status = f"{res['nbHits']} assets" if state.hits else "No results"
         scan_local()
@@ -463,6 +472,6 @@ def unregister():
     bpy.utils.previews.remove(_icons)
     _icons = None
     for hit in state.hits:
-        if hit["image"]:
-            bpy.data.images.remove(hit["image"])
+        if img := bpy.data.images.get(f".quixlend_{hit['id']}"):
+            bpy.data.images.remove(img)
     state.hits = []

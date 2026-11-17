@@ -123,8 +123,7 @@ def draw_grid():
         asset_id, card = hit["id"], m["card"]
         selected = (drag and drag["hit"] is hit) or hover == (region.as_pointer(), asset_id)
         _rect(x, y - m["label"], card, card + m["label"], colors["hover"] if selected else colors["card"])
-        if hit["image"]:
-            image = hit["image"]
+        if image := ui.thumb_image(hit):
             width, height = image.size
             fit = (card - 4 * s) / max(width, height, 1)
             w, h = width * fit, height * fit
@@ -184,13 +183,13 @@ def draw_drag_3d():
 
 def draw_drag():
     """Thumbnail following the mouse (materials, or a mesh not over the viewport); sidebar and viewport."""
-    if not drag or not drag["hit"]["image"]:
+    if not drag or not (image := ui.thumb_image(drag["hit"])):
         return
     if drag["wire"] and drag["loc"]:
         return  # drawn in 3D by draw_drag_3d
     region, size = bpy.context.region, 72 * scale()
     gpu.state.blend_set("ALPHA")
-    _image(drag["hit"]["image"], drag["x"] - region.x - size / 2, drag["y"] - region.y - size / 2, size, size)
+    _image(image, drag["x"] - region.x - size / 2, drag["y"] - region.y - size / 2, size, size)
     gpu.state.blend_set("NONE")
 
 
