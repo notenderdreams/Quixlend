@@ -114,7 +114,7 @@ _pool = ThreadPoolExecutor(4)
 
 def download_size(asset_id, fetch=True):
     """Bytes the Download button would fetch at the chosen resolution; None until the asset listing arrives."""
-    if fetch and asset_id not in state.assets:
+    if fetch and prefs().fetch_sizes and asset_id not in state.assets:
         state.assets[asset_id] = None
 
         def fetch_asset():
@@ -141,6 +141,7 @@ if TYPE_CHECKING:
 
         library: str
         resolution: str
+        fetch_sizes: bool
 
 
 def prefs() -> "Prefs":
@@ -709,11 +710,18 @@ class QuixlendPreferences(bpy.types.AddonPreferences):
         default="4096",
         items=[("1024", "1K", ""), ("2048", "2K", ""), ("4096", "4K", ""), ("8192", "8K", "")],
     )
+    fetch_sizes: BoolProperty(  # pyright: ignore[reportInvalidTypeForm]
+        name="Fetch Download Sizes",
+        default=False,
+        description="Show each card's download size while browsing. This sends one request per asset as it scrolls into view. "
+        "Off: sizes appear only for assets whose details you open",
+    )
 
     def draw(self, context: bpy.types.Context):
         layout = layout_of(self)
         layout.prop(self, "library")
         layout.prop(self, "resolution")
+        layout.prop(self, "fetch_sizes")
 
 
 class QUIXLEND_PT_settings(bpy.types.Panel):
@@ -731,6 +739,7 @@ class QUIXLEND_PT_settings(bpy.types.Panel):
         layout.label(text="Asset Library", icon="ASSET_MANAGER")
         layout.prop(prefs(), "library")
         layout.prop(prefs(), "resolution")
+        layout.prop(prefs(), "fetch_sizes")
         layout.separator()
         layout.label(text="Downloaded", icon="DISK_DRIVE")
         col = layout.column(align=True)
