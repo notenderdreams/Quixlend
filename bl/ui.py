@@ -278,19 +278,28 @@ class QUIXLEND_OT_download(bpy.types.Operator):
 
         def run(finished):
             def fetched(dest, error):
-                finished()  # network part over: the next queued download starts while this one builds
-                state.cancel.pop(asset_id, None)  # nothing left to cancel
-                if error:
-                    settle(error)
-                    return
-                state.building.add(asset_id)
-                jobs.run(lambda: build(dest), built)
+                try:
+                    state.cancel.pop(asset_id, None)  # nothing left to cancel
+                    if not error and stop.is_set():
+                        error = download.Cancelled()  # cancelled after the last byte arrived
+                    if error:
+                        settle(error)
+                        return
+                    state.building.add(asset_id)
+                    jobs.run(lambda: build(dest), built)
+                finally:
+                    finished()  # network part over: the next queued download starts while this one builds
 
             def built(_, error):
                 state.building.discard(asset_id)
                 settle(error)
 
-            jobs.run(fetch, fetched)
+            try:
+                jobs.run(fetch, fetched)
+            except BaseException as e:  # never leave the card stuck, never break the job that started us
+                state.cancel.pop(asset_id, None)
+                settle(e)
+                finished()
 
         state.queue.add(asset_id, run)
         return {"FINISHED"}
