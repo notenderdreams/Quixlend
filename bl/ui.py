@@ -38,6 +38,7 @@ class state:
     loading = False  # a search/page fetch is in flight
     owned = None    # set of asset ids, None until fetched
     local = set()   # ids already built into the library
+    library_bytes = None  # disk used by downloaded assets, None until measured
     progress = {}   # id -> 0..1 while downloading
     speed = {}      # id -> (bytes/s, seconds left) while downloading; None parts until known
     queue = Scheduler(2)  # at most two assets download at once; the rest wait in click order
@@ -83,6 +84,16 @@ def library() -> Path:
 
 def scan_local():
     state.local = {p.stem for p in (library() / "Quixlend").glob("*/*/*.blend") if p.stem == p.parent.name}
+    measure_library()
+
+
+def measure_library():
+    root = library() / "Quixlend"
+
+    def done(size, error):
+        state.library_bytes = size if not error else None
+
+    jobs.run(lambda: sum(f.stat().st_size for f in root.rglob("*") if f.is_file()), done)
 
 
 def ensure_asset_library():
@@ -274,6 +285,7 @@ class QUIXLEND_OT_download(bpy.types.Operator):
                 state.errors[asset_id] = download.reason(error)
                 return
             state.local.add(asset_id)
+            measure_library()
             refresh_asset_browsers()
 
         def run(finished):
@@ -481,6 +493,47 @@ class QUIXLEND_OT_logout(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class QUIXLEND_OT_clean(bpy.types.Operator):
+    bl_idname = "quixlend.clean"
+    bl_label = "Delete Downloaded Assets"
+    bl_description = "Delete every downloaded asset from the library folder"
+
+    @classmethod
+    def poll(cls, context):
+        return not (state.progress or state.building)
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(
+            self, event, title="Delete all downloaded assets?",
+            message=f"{len(state.local)} assets ({_size(state.library_bytes)}) will be removed from disk. "
+                    "This cannot be undone.",
+            confirm_text="Delete")
+
+    def execute(self, context):
+        root = library() / "Quixlend"
+
+        def work():
+            for folder in root.glob("*/*"):
+                if folder.is_dir():
+                    shutil.rmtree(folder, ignore_errors=True)
+
+        def done(_, error):
+            scan_local()
+            refresh_asset_browsers()
+
+        jobs.run(work, done)
+        return {"FINISHED"}
+
+
+def _size(n):
+    if n is None:
+        return "measuring…"
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+
+
 # ---- ui --------------------------------------------------------------------
 
 class QuixlendPreferences(bpy.types.AddonPreferences):
@@ -564,6 +617,7 @@ class QUIXLEND_PT_settings(bpy.types.Panel):
     bl_region_type = "UI"
     bl_category = "Quixlend"
     bl_options = {"INSTANCED"}
+    bl_ui_units_x = 22
 
     def draw(self, context):
         layout = self.layout
@@ -572,6 +626,17 @@ class QUIXLEND_PT_settings(bpy.types.Panel):
         layout.label(text="Asset Library", icon="ASSET_MANAGER")
         layout.prop(prefs(), "library")
         layout.prop(prefs(), "resolution")
+        layout.separator()
+        layout.label(text="Downloaded", icon="DISK_DRIVE")
+        col = layout.column(align=True)
+        col.label(text=f"Assets: {len(state.local)}")
+        col.label(text=f"Size on disk: {_size(state.library_bytes)}")
+        busy = bool(state.progress or state.building)
+        row = layout.row()
+        row.enabled = bool(state.local) and not busy
+        row.operator("quixlend.clean", text="Delete All Downloads", icon="TRASH")
+        if busy:
+            layout.label(text="Wait for active downloads to finish", icon="INFO")
         if session.logged_in:
             layout.separator()
             layout.label(text=session.email or "Epic Games account", icon="USER")
@@ -579,7 +644,7 @@ class QUIXLEND_PT_settings(bpy.types.Panel):
 
 
 CLASSES = (QuixlendPreferences, QUIXLEND_OT_search, QUIXLEND_OT_download, QUIXLEND_OT_details, QUIXLEND_OT_login_open,
-           QUIXLEND_OT_login, QUIXLEND_OT_logout, QUIXLEND_PT_settings, QUIXLEND_PT_browser)
+           QUIXLEND_OT_login, QUIXLEND_OT_logout, QUIXLEND_OT_clean, QUIXLEND_PT_settings, QUIXLEND_PT_browser)
 
 
 def _startup():
