@@ -254,7 +254,7 @@ class QUIXLEND_OT_download(bpy.types.Operator):
         def done(_, error):
             state.progress.pop(asset_id, None)
             if error:
-                state.errors[asset_id] = str(error)
+                state.errors[asset_id] = download.reason(error)
                 return
             state.local.add(asset_id)
             refresh_asset_browsers()

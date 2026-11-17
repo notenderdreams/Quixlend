@@ -2,10 +2,13 @@
 import itertools
 import os
 import queue
+import random
 import threading
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+from http.client import HTTPException
 from pathlib import Path
 
 from . import http
@@ -15,6 +18,28 @@ SECTIONS = ("json", "brushes", "billboards", "components", "meshes")
 
 class DownloadError(Exception):
     pass
+
+
+class ShortRead(DownloadError):
+    """A response ended early; worth retrying."""
+
+
+RETRY_DELAYS = (0.5, 1.0, 2.0)  # seconds before each retry (jittered); one entry per retry allowed
+
+
+def retryable(e):
+    if isinstance(e, urllib.error.HTTPError):
+        return e.code >= 500
+    return isinstance(e, (ShortRead, urllib.error.URLError, HTTPException, OSError))
+
+
+def reason(e):
+    """Short user-facing explanation of why a download failed."""
+    if isinstance(e, urllib.error.HTTPError):
+        return "Link expired or denied" if e.code in (401, 403) else f"Server error {e.code}"
+    if isinstance(e, (urllib.error.URLError, HTTPException, OSError)):
+        return "Network error"
+    return str(e) or type(e).__name__
 
 
 def asset_dir(library, asset) -> Path:
@@ -103,15 +128,35 @@ def fetch_all(files, progress=None, workers=8):
             if progress:
                 progress(done[0], total)
 
+    def attempt(job):
+        """Run job(on_bytes), retrying transient failures; bytes of a failed try are taken back."""
+        for delay in (*RETRY_DELAYS, None):
+            counted = [0]
+
+            def count(n):
+                counted[0] += n
+                on_bytes(n)
+            try:
+                return job(count)
+            except BaseException as e:
+                if isinstance(e, urllib.error.HTTPError):
+                    e.close()
+                on_bytes(-counted[0])
+                if delay is None or not retryable(e):
+                    raise
+                time.sleep(delay * random.uniform(0.5, 1.0))
+
     def put(job, priority):
         todo.put((-priority, next(seq), job))
 
-    def stream(f):
+    def stream(f, on_bytes):
         with _get(f.uri) as res, open(f.part, "wb") as out:
-            _copy(res, out, on_bytes)
+            got = _copy(res, out, on_bytes)
+        if f.size and got < f.size:
+            raise ShortRead(f"{f.path.name}: got {got} bytes, expected {f.size}")
         f.finish()
 
-    def chunk(f, start, end):
+    def chunk(f, start, end, on_bytes):
         with _get(f.uri, start, end) as res:
             if res.status != 206:
                 raise DownloadError(f"{f.path.name}: server ignored the byte range")
@@ -119,27 +164,29 @@ def fetch_all(files, progress=None, workers=8):
                 out.seek(start)
                 got = _copy(res, out, on_bytes)
         if got != end - start + 1:
-            raise DownloadError(f"{f.path.name}: got {got} bytes of range {start}-{end}")
+            raise ShortRead(f"{f.path.name}: got {got} bytes of range {start}-{end}")
         f.chunk_done()
 
-    def first(f):
+    def first(f, on_bytes):
         """First chunk doubles as the range probe: a 206 means the rest can be fetched in parallel."""
         end = min(CHUNK, f.size) - 1
         with _get(f.uri, 0, end) as res:
             if res.status != 206:  # no range support: this response is the whole file
                 with open(f.part, "wb") as out:
-                    _copy(res, out, on_bytes)
+                    got = _copy(res, out, on_bytes)
+                if got < f.size:
+                    raise ShortRead(f"{f.path.name}: got {got} bytes, expected {f.size}")
                 f.finish()
                 return
             with open(f.part, "wb") as out:
                 out.truncate(f.size)
                 got = _copy(res, out, on_bytes)
         if got != end + 1:
-            raise DownloadError(f"{f.path.name}: got {got} bytes of range 0-{end}")
+            raise ShortRead(f"{f.path.name}: got {got} bytes of range 0-{end}")
         starts = range(CHUNK, f.size, CHUNK)
         f.left = 1 + len(starts)
         for start in starts:
-            put(lambda start=start: chunk(f, start, min(start + CHUNK, f.size) - 1), f.size)
+            put(lambda start=start: attempt(lambda on: chunk(f, start, min(start + CHUNK, f.size) - 1, on)), f.size)
         f.chunk_done()
 
     def worker():
@@ -161,7 +208,8 @@ def fetch_all(files, progress=None, workers=8):
             on_bytes(size)
             continue
         f = _File(uri, path, size)
-        put((lambda f=f: first(f)) if size and size > CHUNK else (lambda f=f: stream(f)), size or 0)
+        put((lambda f=f: attempt(lambda on: first(f, on))) if size and size > CHUNK
+            else (lambda f=f: attempt(lambda on: stream(f, on))), size or 0)
 
     threads = [threading.Thread(target=worker, daemon=True) for _ in range(workers)]
     for t in threads:

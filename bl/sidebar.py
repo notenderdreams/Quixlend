@@ -235,6 +235,9 @@ def draw_grid():
             fit = (card - 4 * s) / max(width, height, 1)
             w, h = width * fit, height * fit
             _image(image, x + (card - w) / 2, y + (card - h) / 2, w, h)
+        if error := ui.state.errors.get(asset_id):
+            _rect(x, y, card, 16 * s, (0.55, 0.1, 0.1, 0.85))
+            _text(error, x + 6 * s, y + 4.5 * s, 10 * s, (1, 1, 1, 1), card - 12 * s)
         if ui.state.opening == asset_id:
             _loader(x, y, card)
         over = hover[:2] == (region.as_pointer(), asset_id) if hover else False
