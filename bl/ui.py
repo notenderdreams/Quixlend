@@ -159,7 +159,7 @@ def start_search(page=0, append=False):
                     bpy.data.images.remove(img)
             state.hits = []
         for hit, path in zip(res["hits"], thumbs):
-            state.hits.append({"id": hit["id"], "name": hit["name"], "path": str(path)})
+            state.hits.append({"id": hit["id"], "name": hit["name"], "type": hit.get("type"), "path": str(path)})
         state.page, state.pages = page, res["nbPages"]
         state.status = f"{res['nbHits']} assets" if state.hits else "No results"
         scan_local()

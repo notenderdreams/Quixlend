@@ -131,12 +131,12 @@ def _lift(c, amount):
     return (*(a + (1 - a) * amount for a in c[:3]), c[3])
 
 
-def _main_label(asset_id):
+def _main_label(asset_id, hit):
     st = ui.state
     if asset_id in st.progress:
         return f"Downloading {int(st.progress[asset_id] * 100)}%"
     if asset_id in st.local:
-        return "Import"
+        return "Apply" if hit.get("type") in ("surface", "atlas") else "Import"
     if asset_id in st.errors:
         return "Retry"
     if st.owned is not None and asset_id not in st.owned:
@@ -153,6 +153,17 @@ def _draw_button(rect, label, fill, text, hovered, colors, progress=None, dropdo
     size = 10 * scale()
     blf.size(0, size)
     tw = blf.dimensions(0, label)[0]
+    if label == "Download" and tw > w - 8 * scale():  # too narrow for the text: show a download icon
+        cx, cy, a = x + w / 2, y + h / 2 + scale(), 3.5 * scale()
+        t = scale()
+        tris = ((cx - a, cy), (cx + a, cy), (cx, cy - a),  # arrow head
+                (cx - t / 2, cy + a), (cx + t / 2, cy + a), (cx - t / 2, cy), (cx + t / 2, cy + a), (cx + t / 2, cy), (cx - t / 2, cy),  # stem
+                (cx - a, cy - a - t), (cx + a, cy - a - t), (cx - a, cy - a - 2 * t),  # tray
+                (cx + a, cy - a - t), (cx + a, cy - a - 2 * t), (cx - a, cy - a - 2 * t))
+        shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+        shader.uniform_float("color", text)
+        batch_for_shader(shader, "TRIS", {"pos": tris}).draw(shader)
+        return
     _text(label, x + max(4 * scale(), (w - tw) / 2 - (5 * scale() if dropdown else 0)), y + (h - size) / 2 + 1.5 * scale(), size, text, w - 8 * scale())
 
 
@@ -184,7 +195,7 @@ def draw_grid():
         main, res = buttons(m, hit, x, y)
         local, busy = asset_id in ui.state.local, asset_id in ui.state.progress
         unavailable = ui.state.owned is not None and asset_id not in ui.state.owned
-        _draw_button(main, _main_label(asset_id), colors["button"], colors["button_text"],
+        _draw_button(main, _main_label(asset_id, hit), colors["button"], colors["button_text"],
                      zone == "main" and not busy and not unavailable, colors,
                      ui.state.progress.get(asset_id))
         if res:
