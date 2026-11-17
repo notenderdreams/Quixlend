@@ -4,6 +4,7 @@ Blender's Python UI has no drag source, so the panel only reserves empty space a
 this module draws the cards into it and handles the mouse itself.
 """
 
+import itertools
 import math
 import random
 import time
@@ -102,6 +103,9 @@ def buttons(m, hit, x, y):
             cancel_w,
             bh,
         )
+    if hit["id"] in st.local and hit.get("type") in ("surface", "atlas"):  # Apply + copy-node-group icon
+        copy_w = 24 * scale()
+        return (bx, by, m["card"] - 3 * pad - copy_w, bh), (bx + m["card"] - 2 * pad - copy_w, by, copy_w, bh)
     if hit["id"] in st.local or hit["id"] in st.progress:
         return (bx, by, m["card"] - 2 * pad, bh), None
     res_w = 46 * scale()
@@ -114,12 +118,13 @@ def _inside(rect, px, py):
 
 
 def zone_at(region, px, py) -> tuple[dict[str, Any] | None, str | None]:
-    """(hit, zone) under the pointer; zone is "main", "res" or None (the image part)."""
+    """(hit, zone) under the pointer; zone is "main", "res", "copy" or None (the image part)."""
     m, items = cells(region)
     for hit, cx, cy in items:
         if cx <= px <= cx + m["card"] and cy - m["label"] <= py <= cy + m["card"]:
             main, res = buttons(m, hit, cx, cy)
-            return hit, "main" if _inside(main, px, py) else "res" if _inside(res, px, py) else None
+            second = "copy" if hit["id"] in ui.state.local else "res"
+            return hit, "main" if _inside(main, px, py) else second if _inside(res, px, py) else None
     return None, None
 
 
@@ -314,6 +319,48 @@ def _draw_cancel(rect, fill, text, hovered):
         batch_for_shader(shader, "TRIS", {"pos": pts}).draw(shader)
 
 
+flashed: dict[tuple[str, str], float] = {}  # (asset id, zone) -> time of the last success, for the tick flash
+TICK_SECONDS = 1.5
+
+
+def flash(asset_id, zone, area):
+    """Show a tick on a button for a moment."""
+    flashed[asset_id, zone] = time.time()
+    area.tag_redraw()
+    bpy.app.timers.register(area.tag_redraw, first_interval=TICK_SECONDS + 0.05)
+
+
+def _ticked(asset_id, zone):
+    return time.time() - flashed.get((asset_id, zone), -TICK_SECONDS) < TICK_SECONDS
+
+
+def _draw_tick(rect, fill, text):
+    x, y, w, h = rect
+    t = scale()
+    _rrect(x, y, w, h, 3 * t, _lift(fill, 0.12))
+    cx, cy, a = x + w / 2, y + h / 2, 4 * t
+    p = ((cx - a, cy), (cx - a * 0.35, cy - a * 0.7), (cx + a, cy + a * 0.8))
+    shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+    shader.uniform_float("color", text)
+    for (x0, y0), (x1, y1) in itertools.pairwise(p):
+        dx, dy = x1 - x0, y1 - y0
+        n = math.hypot(dx, dy)
+        nx, ny = -dy / n * 0.8 * t, dx / n * 0.8 * t
+        quad = ((x0 + nx, y0 + ny), (x0 - nx, y0 - ny), (x1 - nx, y1 - ny), (x1 + nx, y1 + ny))
+        _fan(shader, {"pos": quad}).draw(shader)
+
+
+def _draw_copy(rect, fill, text, hovered):
+    """Two overlapping squares: the copy icon."""
+    x, y, w, h = rect
+    t = scale()
+    _rrect(x, y, w, h, 3 * t, _lift(fill, 0.12) if hovered else fill)
+    cx, cy, a = x + w / 2, y + h / 2, 4 * t
+    _rrect(cx - a - t, cy - a + t, 2 * a, 2 * a, t, text)  # back sheet
+    _rrect(cx - a + 2 * t, cy - a - 2 * t, 2 * a, 2 * a, t, (*text[:3], 1))
+    _rrect(cx - a + 3 * t, cy - a - t, 2 * a - 2 * t, 2 * a - 2 * t, 0.5 * t, fill)  # hollow the front sheet
+
+
 def _draw_button(rect, label, fill, text, hovered, colors, progress=None, dropdown=False):
     x, y, w, h = rect
     r = 3 * scale()
@@ -395,7 +442,9 @@ def draw_grid():
         unavailable = ui.state.owned is not None and asset_id not in ui.state.owned
         label = _main_label(asset_id, hit)
         hovered = zone == "main" and not busy and not unavailable
-        if label == "Download":
+        if label in ("Apply", "Import") and _ticked(asset_id, "main"):
+            _draw_tick(main, colors["button"], colors["button_text"])
+        elif label == "Download":
             _draw_download(main, ui.download_size(asset_id), colors["button"], colors["button_text"], hovered)
         else:
             _draw_button(
@@ -407,7 +456,11 @@ def draw_grid():
                 colors,
                 _progress_value(asset_id),
             )
-        if res and asset_id in ui.state.cancel:
+        if res and _local and _ticked(asset_id, "copy"):
+            _draw_tick(res, colors["button"], colors["button_text"])
+        elif res and _local:
+            _draw_copy(res, colors["button"], colors["button_text"], zone == "copy")
+        elif res and asset_id in ui.state.cancel:
             _draw_cancel(res, colors["button"], colors["button_text"], zone == "res")
         elif res:
             _draw_button(
@@ -539,7 +592,7 @@ class QUIXLEND_OT_card(bpy.types.Operator):
         asset_id, st = self.hit["id"], ui.state
         if event.type == "MOUSEMOVE":
             moved = abs(event.mouse_x - self.start[0]) + abs(event.mouse_y - self.start[1])
-            if drag or (asset_id in st.local and self.zone != "res" and moved > 6 * scale()):
+            if drag or (asset_id in st.local and self.zone not in ("res", "copy") and moved > 6 * scale()):
                 if not drag:
                     drag = {"hit": self.hit, "wire": preview(asset_id), "loc": None}
                 drag.update(x=event.mouse_x, y=event.mouse_y)
@@ -555,6 +608,8 @@ class QUIXLEND_OT_card(bpy.types.Operator):
                 self.drop(context, event, chosen)
             elif self.zone is None:
                 ui.open_details(asset_id, context.window, self.area)
+            elif self.zone == "copy":
+                self.copy_group(context)
             elif self.zone == "res" and asset_id in st.cancel:
                 ui.cancel_download(asset_id)
             elif self.zone == "res":
@@ -571,6 +626,18 @@ class QUIXLEND_OT_card(bpy.types.Operator):
             self.area.tag_redraw()
             return {"CANCELLED"}
         return {"RUNNING_MODAL"}
+
+    def copy_group(self, context):
+        """Run the copy after this modal ends: it borrows the area, which must not be in use by a running operator."""
+        asset_id, window, area = self.hit["id"], context.window, self.area
+
+        def run():
+            region = next(r for r in area.regions if r.type == "WINDOW")
+            with bpy.context.temp_override(window=window, area=area, region=region):
+                if bpy.ops.quixlend.copy_group(asset_id=asset_id) == {"FINISHED"}:  # pyright: ignore[reportAttributeAccessIssue]
+                    flash(asset_id, "copy", area)
+
+        bpy.app.timers.register(run, first_interval=0)
 
     def locate(self, context, mx, my):
         """(location, target object or None) under the mouse: the surface hit, else the ground plane;
@@ -604,6 +671,8 @@ class QUIXLEND_OT_card(bpy.types.Operator):
             message = ui.place(context, self.hit["id"], pick=random.choice)
         if message:
             self.report({"WARNING"}, message)
+        else:
+            flash(self.hit["id"], "main", self.area)
 
     def drop(self, context, event, chosen):
         """Place the asset exactly where the preview was: same variation, same spot."""
@@ -621,6 +690,8 @@ class QUIXLEND_OT_card(bpy.types.Operator):
             message = ui.place(context, self.hit["id"], location, target, pick=pick)
         if message:
             self.report({"WARNING"}, message)
+        else:
+            flash(self.hit["id"], "main", self.area)
 
 
 _handles = []

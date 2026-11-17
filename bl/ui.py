@@ -584,6 +584,40 @@ class QUIXLEND_OT_logout(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class QUIXLEND_OT_copy_group(bpy.types.Operator):
+    bl_idname = "quixlend.copy_group"
+    bl_label = "Copy Node Group"
+    bl_description = "Copy this material's node group; paste it (Ctrl+V) into any shader editor"
+    asset_id: StringProperty()  # pyright: ignore[reportInvalidTypeForm]
+
+    def execute(self, context: bpy.types.Context) -> Result:
+        _, materials = load_templates(self.asset_id)
+        tree = materials[0].node_tree if materials else None
+        group = next((n for n in tree.nodes if n.bl_idname == "ShaderNodeGroup"), None) if tree else None
+        area = context.area
+        if not (tree and group and area):
+            self.report({"WARNING"}, "Nothing to copy; download the asset again")
+            return {"CANCELLED"}
+        for n in tree.nodes:
+            n.select = n == group
+        old = area.type
+        area.type = (
+            "NODE_EDITOR"  # node.clipboard_copy only runs inside a node editor; borrow this area briefly
+        )
+        try:
+            space = cast(bpy.types.SpaceNodeEditor, area.spaces.active)
+            space.tree_type = "ShaderNodeTree"
+            space.pin = True
+            space.node_tree = tree
+            region = next(r for r in area.regions if r.type == "WINDOW")
+            with context.temp_override(area=area, region=region, space_data=space):
+                bpy.ops.node.clipboard_copy()
+        finally:
+            area.type = old
+        self.report({"INFO"}, "Copied node group; paste with Ctrl+V in a shader editor")
+        return {"FINISHED"}
+
+
 class QUIXLEND_OT_clean(bpy.types.Operator):
     bl_idname = "quixlend.clean"
     bl_label = "Delete Downloaded Assets"
@@ -691,6 +725,7 @@ CLASSES = (
     QUIXLEND_OT_login_open,
     QUIXLEND_OT_login,
     QUIXLEND_OT_logout,
+    QUIXLEND_OT_copy_group,
     QUIXLEND_OT_clean,
     QUIXLEND_PT_settings,
 )
