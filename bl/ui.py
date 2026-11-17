@@ -18,7 +18,7 @@ from ..core.scheduler import Scheduler
 from . import jobs
 
 ADDON = __package__.rpartition(".")[0]
-HOME = Path.home() / ".quixlend"  # shared with cli.py: one login for both
+HOME = Path.home() / ".quixlend"
 BUILD_SCRIPT = str(Path(__file__).with_name("build.py"))
 PER_PAGE = 24
 _icons = None

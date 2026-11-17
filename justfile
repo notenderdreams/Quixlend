@@ -17,3 +17,8 @@ fix:
 
 test:
     python3 -m unittest discover -s tests -t .
+
+# remove ruff cache and __pycache__ dirs
+clean:
+    rm -rf .ruff_cache
+    find . -name __pycache__ -type d -prune -not -path './.git/*' -exec rm -rf {} +
