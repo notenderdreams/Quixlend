@@ -239,16 +239,18 @@ def _progress_label(asset_id):
 
 def _progress_value(asset_id):
     st = ui.state
-    if asset_id in st.building:
+    if asset_id in st.building or asset_id in st.working:
         return 1.0
-    return None if st.queue.queued(asset_id) else st.progress.get(asset_id)
+    return None if st.queue.queued(asset_id) or asset_id in st.restart else st.progress.get(asset_id)
 
 
 def _main_label(asset_id, hit):
     st = ui.state
+    if asset_id in st.working:
+        return st.working[asset_id]
     if asset_id in st.building:
         return "Building"
-    if st.queue.queued(asset_id):
+    if st.queue.queued(asset_id) or asset_id in st.restart:
         return "Queued"
     if asset_id in st.progress:
         return _progress_label(asset_id)
@@ -438,7 +440,8 @@ def draw_grid():
             card - 12 * s,
         )
         main, res = buttons(m, hit, x, y)
-        _local, busy = asset_id in ui.state.local, asset_id in ui.state.progress
+        _local = asset_id in ui.state.local
+        busy = asset_id in ui.state.progress or asset_id in ui.state.working
         unavailable = ui.state.owned is not None and asset_id not in ui.state.owned
         label = _main_label(asset_id, hit)
         hovered = zone == "main" and not busy and not unavailable
@@ -617,9 +620,12 @@ class QUIXLEND_OT_card(bpy.types.Operator):
             elif self.zone == "main":
                 if asset_id in st.local:
                     self.import_at_cursor(context)
+                elif asset_id in st.working:
+                    pass  # already applying
                 elif asset_id not in st.progress and (st.owned is None or asset_id in st.owned):
                     st.errors.pop(asset_id, None)
                     bpy.ops.quixlend.download(asset_id=asset_id)  # pyright: ignore[reportAttributeAccessIssue]
+            self.area.tag_redraw()
             return {"FINISHED"}
         elif event.type in {"ESC", "RIGHTMOUSE"}:
             drag = None
@@ -664,15 +670,35 @@ class QUIXLEND_OT_card(bpy.types.Operator):
             )
         return location, target
 
+    def place_later(self, context, **kwargs):
+        """Run ui.place after a redraw: it blocks the main thread, so show "Applying" first."""
+        hit, window, area = self.hit, context.window, self.area
+        asset_id = hit["id"]
+        ui.state.working[asset_id] = "Applying" if hit.get("type") in ("surface", "atlas") else "Importing"
+        area.tag_redraw()
+
+        def run():
+            region = next(r for r in area.regions if r.type == "WINDOW")
+            try:
+                with bpy.context.temp_override(window=window, area=area, region=region):
+                    message = ui.place(bpy.context, asset_id, **kwargs)
+                    if not message:
+                        bpy.ops.ed.undo_push(message="Quixlend: " + ui.state.working[asset_id])
+            finally:
+                ui.state.working.pop(asset_id, None)
+            if message:
+                bpy.context.window_manager.popup_menu(
+                    lambda menu, _context: menu.label(text=message, icon="ERROR"), title="Quixlend"
+                )
+            else:
+                flash(asset_id, "main", area)
+            area.tag_redraw()
+
+        bpy.app.timers.register(run, first_interval=0.05)
+
     def import_at_cursor(self, context):
         """Import at the 3D cursor (materials go on the selected objects)."""
-        region = next(r for r in self.area.regions if r.type == "WINDOW")
-        with context.temp_override(area=self.area, region=region):
-            message = ui.place(context, self.hit["id"], pick=random.choice)
-        if message:
-            self.report({"WARNING"}, message)
-        else:
-            flash(self.hit["id"], "main", self.area)
+        self.place_later(context, pick=random.choice)
 
     def drop(self, context, event, chosen):
         """Place the asset exactly where the preview was: same variation, same spot."""
@@ -680,18 +706,12 @@ class QUIXLEND_OT_card(bpy.types.Operator):
         if not found:
             return  # released outside the viewport: cancel
         location, target = found
-        region = next(r for r in self.area.regions if r.type == "WINDOW")
         pick = (
             (lambda sources: next((o for o in sources if o.name == chosen), sources[0]))
             if chosen
             else random.choice
         )
-        with context.temp_override(area=self.area, region=region):
-            message = ui.place(context, self.hit["id"], location, target, pick=pick)
-        if message:
-            self.report({"WARNING"}, message)
-        else:
-            flash(self.hit["id"], "main", self.area)
+        self.place_later(context, location=location, target=target, pick=pick)
 
 
 _handles = []

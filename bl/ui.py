@@ -98,6 +98,11 @@ class state:
     ] = {}  # id -> threading.Event, present only while the network part can still be cancelled
     errors: dict[str, str] = {}  # id -> message
     sizes: dict[tuple[str, int], int] = {}  # (id, resolution) -> download bytes
+    cancelling: set[str] = set()  # cancelled in the UI; the old worker is still stopping and cleaning up
+    restart: set[str] = (
+        set()
+    )  # download clicked again while the old one was still stopping; starts when it has
+    working: dict[str, str] = {}  # id -> "Applying"/"Importing" while place() blocks the main thread
     opening: str | None = None  # id of the card whose details are loading
     assets: dict[
         str, dict[str, Any] | None
@@ -323,14 +328,20 @@ class QUIXLEND_OT_download(bpy.types.Operator):
 
     def execute(self, context: bpy.types.Context) -> Result:
         asset_id, root = self.asset_id, library()
-        if asset_id in state.progress:
+        if asset_id in state.progress or asset_id in state.restart:
             return {"FINISHED"}  # already queued, downloading or building
+        if asset_id in state.cancelling:
+            state.restart.add(asset_id)  # the old worker still owns the files: start once it is gone
+            jobs.redraw()
+            return {"FINISHED"}
         resolution, blender = int(prefs().resolution), bpy.app.binary_path
         state.progress[asset_id] = 0.0
         state.errors.pop(asset_id, None)
         stop = state.cancel[asset_id] = threading.Event()
 
         def progress(done_bytes, total):
+            if asset_id in state.cancelling:
+                return  # cancelled in the UI; the dying workers must not bring the bar back
             state.progress[asset_id] = done_bytes / max(
                 total, 1
             )  # the network part only; building is its own state
@@ -346,7 +357,9 @@ class QUIXLEND_OT_download(bpy.types.Operator):
                 progress,
                 refresh=plan,
                 cancel=stop,
-                speed=lambda bps, eta: state.speed.__setitem__(asset_id, (bps, eta)),
+                speed=lambda bps, eta: (
+                    asset_id in state.cancelling or state.speed.__setitem__(asset_id, (bps, eta))
+                ),
             )
             return dest
 
@@ -365,14 +378,24 @@ class QUIXLEND_OT_download(bpy.types.Operator):
         def settle(error):
             state.progress.pop(asset_id, None)
             state.speed.pop(asset_id, None)
-            if isinstance(error, download.Cancelled):
-                return  # not a failure: no error on the card
-            if error:
-                state.errors[asset_id] = download.reason(error)
-                return
-            state.local.add(asset_id)
-            measure_library()
-            refresh_asset_browsers()
+            state.cancelling.discard(asset_id)
+            try:
+                if isinstance(error, download.Cancelled):
+                    return  # not a failure: no error on the card
+                if error:
+                    state.errors[asset_id] = download.reason(error)
+                    return
+                state.local.add(asset_id)
+                measure_library()
+                refresh_asset_browsers()
+            finally:
+                if asset_id in state.restart:  # clicked Download again while this was stopping
+                    state.restart.discard(asset_id)
+                    # one tick later: the old job releases its scheduler slot right after settle()
+                    bpy.app.timers.register(
+                        lambda: bpy.ops.quixlend.download(asset_id=asset_id) and None,  # pyright: ignore[reportAttributeAccessIssue]
+                        first_interval=0,
+                    )
 
         def run(finished):
             def fetched(dest, error):
@@ -400,16 +423,23 @@ class QUIXLEND_OT_download(bpy.types.Operator):
                 finished()
 
         state.queue.add(asset_id, run)
+        jobs.redraw()  # show Queued/progress now, not on the next mouse move
         return {"FINISHED"}
 
 
 def cancel_download(asset_id):
-    """Stop a running download, or drop a queued one."""
-    if event := state.cancel.get(asset_id):
+    """Cancel at once as far as the UI goes; a running download stops and cleans up in the background."""
+    event = state.cancel.get(asset_id)
+    if event:
         event.set()
     if state.queue.cancel(asset_id):  # it had not started: nothing will report back, so clean up here
-        state.progress.pop(asset_id, None)
         state.cancel.pop(asset_id, None)
+    elif event:
+        state.cancelling.add(asset_id)  # settle() clears it when the workers are gone
+        state.cancel.pop(asset_id, None)
+        state.speed.pop(asset_id, None)
+    state.progress.pop(asset_id, None)
+    jobs.redraw()
 
 
 def load_templates(asset_id):
@@ -488,6 +518,7 @@ def open_details(asset_id, window, area):
     if state.opening:
         return
     state.opening = asset_id
+    jobs.redraw()  # spinner now
     hit = next(h for h in state.hits if h["id"] == asset_id)
 
     def work():

@@ -42,7 +42,7 @@ def _pump():
         changed = True
     if changed:
         redraw()
-    return 0.2
+    return 0.05
 
 
 def register():
