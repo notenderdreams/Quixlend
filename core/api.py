@@ -195,3 +195,32 @@ def payload_size(asset, payload):
                          if m["type"] == "lod" and m["tris"] == tris
                          for u in m["uris"] if u["mimeType"] == FBX)
     return total
+
+
+def asset_info(asset):
+    """[(label, value)] describing an extended asset, empty values dropped."""
+    sem = asset.get("semanticTags") or {}
+    cats = asset.get("categories") or []
+    comps = asset.get("maps") or asset.get("components") or []
+    tris = [m["tris"] for m in (asset.get("meshes") or []) + (asset.get("models") or []) if m.get("tris")]
+    res = sorted({max(_parse_res(r)) for r in _resolutions(asset)})
+    join = lambda v: ", ".join(v) if isinstance(v, list) else v
+    rows = [
+        ("Type", cats[0] if cats else ""),
+        ("Category", " / ".join(cats[1:])),
+        ("Points", "Free" if asset.get("points") == 0 else asset.get("points")),
+        ("Physical size", asset.get("physicalSize")),
+        ("Object size", f"{sem['minSize']} - {sem['maxSize']} m" if "minSize" in sem and "maxSize" in sem else ""),
+        ("Resolutions", ", ".join(f"{r // 1024}K" if r >= 1024 else str(r) for r in res)),
+        ("Max triangles", f"{max(tris):,}" if tris else ""),
+        ("Maps", ", ".join(dict.fromkeys(c["type"] for c in comps))),
+        ("Theme", join(sem.get("theme"))),
+        ("Environment", join(sem.get("environment"))),
+        ("Region", join([x for x in (sem.get("country"), sem.get("region")) if x])),
+        ("Color", join(sem.get("color"))),
+        ("Contains", join(sem.get("contains"))),
+        ("Descriptive", join(sem.get("descriptive"))),
+        ("Tags", join(asset.get("tags"))),
+        ("ID", asset.get("id")),
+    ]
+    return [(k, str(v)) for k, v in rows if v not in ("", None, [])]

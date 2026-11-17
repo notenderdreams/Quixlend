@@ -5,6 +5,7 @@ this module draws the cards into it and handles the mouse itself.
 """
 import math
 import random
+import time
 
 import blf
 import bpy
@@ -198,6 +199,21 @@ def _draw_button(rect, label, fill, text, hovered, colors, progress=None, dropdo
     _text(label, x + max(4 * scale(), (w - tw) / 2 - (5 * scale() if dropdown else 0)), y + (h - size) / 2 + 1.5 * scale(), size, text, w - 8 * scale())
 
 
+def _loader(x, y, card):
+    """Dim the thumbnail and draw a spinner over it."""
+    s = scale()
+    _rect(x, y, card, card, (0, 0, 0, 0.5))
+    cx, cy, radius, n = x + card / 2, y + card / 2, 10 * s, 10
+    head = time.time() * 10
+    shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+    for i in range(n):
+        angle = 2 * math.pi * i / n
+        shader.uniform_float("color", (1, 1, 1, 0.15 + 0.85 * ((head - i) % n) / n))
+        px, py, d = cx + radius * math.cos(angle), cy + radius * math.sin(angle), 1.8 * s
+        batch_for_shader(shader, "TRI_FAN", {"pos": ((px - d, py - d), (px + d, py - d), (px + d, py + d), (px - d, py + d))}).draw(shader)
+    ui.jobs.dirty.set()  # keep redrawing while it spins
+
+
 def draw_grid():
     region = bpy.context.region
     if not active(region) or not ui.state.panel_open:
@@ -219,6 +235,8 @@ def draw_grid():
             fit = (card - 4 * s) / max(width, height, 1)
             w, h = width * fit, height * fit
             _image(image, x + (card - w) / 2, y + (card - h) / 2, w, h)
+        if ui.state.opening == asset_id:
+            _loader(x, y, card)
         over = hover[:2] == (region.as_pointer(), asset_id) if hover else False
         zone = hover[2] if over else None
         _rect(x, y + card - 20 * s, card, 20 * s, (0, 0, 0, 0.6))
@@ -355,6 +373,8 @@ class QUIXLEND_OT_card(bpy.types.Operator):
                 drag = None
                 self.area.tag_redraw()
                 self.drop(context, event, chosen)
+            elif self.zone is None:
+                ui.open_details(asset_id, context.window, self.area)
             elif self.zone == "res":
                 context.window_manager.popup_menu(ui.draw_res_menu, title="Texture Resolution")
             elif self.zone == "main":

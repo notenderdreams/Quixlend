@@ -19,6 +19,7 @@ HOME = Path.home() / ".quixlend"  # shared with cli.py: one login for both
 BUILD_SCRIPT = str(Path(__file__).with_name("build.py"))
 PER_PAGE = 24
 _icons = None
+_big = None  # large previews for the details popup
 TYPES = [("ALL", "All Types", ""), ("3d", "3D Assets", ""), ("3dplant", "3D Plants", ""),
          ("surface", "Surfaces", ""), ("atlas", "Atlases", ""), ("brush", "Brushes", "")]
 
@@ -38,6 +39,7 @@ class state:
     progress = {}   # id -> 0..1 while downloading
     errors = {}     # id -> message
     sizes = {}      # (id, resolution) -> download bytes
+    opening = None  # id of the card whose details are loading
     assets = {}     # id -> extended asset (None if the fetch failed), for size estimates
 
 
@@ -123,6 +125,16 @@ def load_owned():
 
 # ---- search ----------------------------------------------------------------
 
+def _big_preview(hit):
+    """Path of the large preview image, downloaded once."""
+    path = HOME / "thumbs" / f"{hit['id']}_big.jpg"
+    if not path.exists():
+        req = urllib.request.Request(hit["big"], headers={"User-Agent": http.UA})
+        with urllib.request.urlopen(req, timeout=30) as res:
+            path.write_bytes(res.read())
+    return path
+
+
 def _thumb(hit):
     path = HOME / "thumbs" / f"{hit['id']}.jpg"
     if not path.exists():
@@ -185,7 +197,8 @@ def start_search(page=0, append=False):
                     bpy.data.images.remove(img)
             state.hits = []
         for hit, path in zip(res["hits"], thumbs):
-            state.hits.append({"id": hit["id"], "name": hit["name"], "type": hit.get("type"), "path": str(path)})
+            state.hits.append({"id": hit["id"], "name": hit["name"], "type": hit.get("type"),
+                              "big": hit["previews"]["images"].get("preview") or hit["previews"]["images"]["thumb"], "path": str(path)})
         state.page, state.pages = page, res["nbPages"]
         state.status = f"{res['nbHits']} assets" if state.hits else "No results"
         scan_local()
@@ -315,6 +328,63 @@ def place(context, asset_id, location=None, target=None, pick=None):
 
 
 # ---- login -----------------------------------------------------------------
+
+def open_details(asset_id, window, area):
+    """Fetch preview + asset details off the main thread (card shows a loader meanwhile), then pop up the details."""
+    if state.opening:
+        return
+    state.opening = asset_id
+    hit = next(h for h in state.hits if h["id"] == asset_id)
+
+    def work():
+        path = _big_preview(hit)
+        return path, state.assets.get(asset_id) or client.asset(asset_id)
+
+    def done(result, error):
+        state.opening = None
+        if not error:
+            path, state.assets[asset_id] = result
+            if not _big.get(asset_id):
+                _big.load(asset_id, str(path), "IMAGE")
+        region = next(r for r in area.regions if r.type == "WINDOW")
+        with bpy.context.temp_override(window=window, area=area, region=region):
+            bpy.ops.quixlend.details("INVOKE_DEFAULT", asset_id=asset_id)
+
+    jobs.run(work, done)
+
+
+class QUIXLEND_OT_details(bpy.types.Operator):
+    bl_idname = "quixlend.details"
+    bl_label = "Asset Details"
+    bl_options = {"INTERNAL"}
+    asset_id: StringProperty()
+
+    def invoke(self, context, event):
+        self.hit = next(h for h in state.hits if h["id"] == self.asset_id)
+        preview = _big.get(self.asset_id)
+        self.icon = preview.icon_id if preview else 0
+        asset = state.assets.get(self.asset_id)
+        self.info = api.asset_info(asset) if asset else [("Details unavailable", "")]
+        self.size = download_size(self.asset_id, fetch=False)
+        return context.window_manager.invoke_popup(self, width=420)
+
+    def draw(self, context):
+        layout, st = self.layout, state
+        if self.icon:
+            layout.template_icon(icon_value=self.icon, scale=14)
+        layout.label(text=self.hit["name"])
+        col = layout.column(align=True)
+        rows = list(self.info)
+        if self.size:
+            rows.insert(0, ("Download size", f"{self.size / 1e6:,.0f} MB at {res_label()}"))
+        for key, value in rows:
+            row = col.split(factor=0.3)
+            row.label(text=key)
+            row.label(text=value)
+
+    def execute(self, context):
+        return {"FINISHED"}
+
 
 class QUIXLEND_OT_login_open(bpy.types.Operator):
     bl_idname = "quixlend.login_open"
@@ -457,7 +527,7 @@ class QUIXLEND_PT_settings(bpy.types.Panel):
             layout.operator("quixlend.logout", text="Sign Out", icon="QUIT")
 
 
-CLASSES = (QuixlendPreferences, QUIXLEND_OT_search, QUIXLEND_OT_download, QUIXLEND_OT_login_open,
+CLASSES = (QuixlendPreferences, QUIXLEND_OT_search, QUIXLEND_OT_download, QUIXLEND_OT_details, QUIXLEND_OT_login_open,
            QUIXLEND_OT_login, QUIXLEND_OT_logout, QUIXLEND_PT_settings, QUIXLEND_PT_browser)
 
 
@@ -488,8 +558,9 @@ def _asset_browser_header(self, context):
 
 
 def register():
-    global _icons
+    global _icons, _big
     _icons = bpy.utils.previews.new()
+    _big = bpy.utils.previews.new()
     _icons.load("quixel", str(Path(__file__).parents[1] / "assets" / "quixel.png"), "IMAGE")
     for cls in CLASSES:
         bpy.utils.register_class(cls)
@@ -503,7 +574,7 @@ def register():
 
 
 def unregister():
-    global _icons
+    global _icons, _big
     bpy.app.handlers.load_post.remove(_file_loaded)
     bpy.types.ASSETBROWSER_MT_editor_menus.remove(_asset_browser_header)
     wm = bpy.types.WindowManager
@@ -511,7 +582,8 @@ def unregister():
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)
     bpy.utils.previews.remove(_icons)
-    _icons = None
+    bpy.utils.previews.remove(_big)
+    _icons = _big = None
     for hit in state.hits:
         if img := bpy.data.images.get(f".quixlend_{hit['id']}"):
             bpy.data.images.remove(img)
