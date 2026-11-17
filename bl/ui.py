@@ -259,10 +259,15 @@ def place(context, asset_id, location=None, target=None, pick=None):
             sources = [pick(sources)]
         bpy.ops.object.select_all(action="DESELECT")
         base, x = (location or context.scene.cursor.location).copy(), 0.0
+        collection = bpy.data.collections.get("Megascans")
+        if collection is None:
+            collection = bpy.data.collections.new("Megascans")
+        if collection not in context.scene.collection.children_recursive:
+            context.scene.collection.children.link(collection)
         for source in sources:
             obj = source.copy()
             del obj["quixlend_source"]
-            context.collection.objects.link(obj)
+            collection.objects.link(obj)
             obj.location = base
             obj.location.x += x
             xs = [corner[0] for corner in source.bound_box]  # dimensions are 0 on unlinked objects
