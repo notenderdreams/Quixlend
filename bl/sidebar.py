@@ -168,6 +168,10 @@ def _progress_label(asset_id):
 
 def _main_label(asset_id, hit):
     st = ui.state
+    if asset_id in st.building:
+        return "Building"
+    if st.queue.queued(asset_id):
+        return "Queued"
     if asset_id in st.progress:
         return _progress_label(asset_id)
     if asset_id in st.local:
@@ -286,7 +290,8 @@ def draw_grid():
             _draw_download(main, ui.download_size(asset_id), colors["button"], colors["button_text"], hovered)
         else:
             _draw_button(main, label, colors["button"], colors["button_text"], hovered, colors,
-                         ui.state.progress.get(asset_id))
+                         1.0 if asset_id in ui.state.building
+                         else None if ui.state.queue.queued(asset_id) else ui.state.progress.get(asset_id))
         if res and asset_id in ui.state.cancel:
             _draw_cancel(res, colors["button"], colors["button_text"], zone == "res")
         elif res:
@@ -414,7 +419,7 @@ class QUIXLEND_OT_card(bpy.types.Operator):
             elif self.zone is None:
                 ui.open_details(asset_id, context.window, self.area)
             elif self.zone == "res" and asset_id in st.cancel:
-                st.cancel[asset_id].set()
+                ui.cancel_download(asset_id)
             elif self.zone == "res":
                 context.window_manager.popup_menu(ui.draw_res_menu, title="Texture Resolution")
             elif self.zone == "main":

@@ -13,6 +13,7 @@ import bpy.utils.previews
 from bpy.props import BoolProperty, EnumProperty, StringProperty
 
 from ..core import api, auth, download, http
+from ..core.scheduler import Scheduler
 from . import jobs
 
 ADDON = __package__.rpartition(".")[0]
@@ -39,6 +40,8 @@ class state:
     local = set()   # ids already built into the library
     progress = {}   # id -> 0..1 while downloading
     speed = {}      # id -> (bytes/s, seconds left) while downloading; None parts until known
+    queue = Scheduler(2)  # at most two assets download at once; the rest wait in click order
+    building = set()  # ids past the network part, being built into the library
     cancel = {}     # id -> threading.Event, present only while the network part can still be cancelled
     errors = {}     # id -> message
     sizes = {}      # (id, resolution) -> download bytes
@@ -233,25 +236,27 @@ class QUIXLEND_OT_download(bpy.types.Operator):
 
     def execute(self, context):
         asset_id, root = self.asset_id, library()
+        if asset_id in state.progress:
+            return {"FINISHED"}  # already queued, downloading or building
         resolution, blender = int(prefs().resolution), bpy.app.binary_path
         state.progress[asset_id] = 0.0
         state.errors.pop(asset_id, None)
         stop = state.cancel[asset_id] = threading.Event()
 
         def progress(done_bytes, total):
-            state.progress[asset_id] = 0.9 * done_bytes / max(total, 1)
+            state.progress[asset_id] = done_bytes / max(total, 1)  # the network part only; building is its own state
             jobs.dirty.set()
 
-        def work():
+        def fetch():
             asset = client.asset(asset_id)
             payload = api.build_payload(asset, resolution)
             dest = download.asset_dir(root, asset)
             plan = lambda: download.plan(client.request_download(payload), dest)
-            try:
-                download.fetch_all(plan(), progress, refresh=plan, cancel=stop,
-                                   speed=lambda bps, eta: state.speed.__setitem__(asset_id, (bps, eta)))
-            finally:
-                state.cancel.pop(asset_id, None)  # past the network part there is nothing left to cancel
+            download.fetch_all(plan(), progress, refresh=plan, cancel=stop,
+                               speed=lambda bps, eta: state.speed.__setitem__(asset_id, (bps, eta)))
+            return dest
+
+        def build(dest):
             thumb = HOME / "thumbs" / f"{asset_id}.jpg"  # Quixel's own catalog thumbnail
             if thumb.exists():
                 shutil.copyfile(thumb, dest / "_Thumb.jpg")
@@ -260,7 +265,7 @@ class QUIXLEND_OT_download(bpy.types.Operator):
             if "QUIXLEND_BUILT" not in proc.stdout:
                 raise RuntimeError((proc.stderr or proc.stdout).strip().splitlines()[-1])
 
-        def done(_, error):
+        def settle(error):
             state.progress.pop(asset_id, None)
             state.speed.pop(asset_id, None)
             if isinstance(error, download.Cancelled):
@@ -271,8 +276,33 @@ class QUIXLEND_OT_download(bpy.types.Operator):
             state.local.add(asset_id)
             refresh_asset_browsers()
 
-        jobs.run(work, done)
+        def run(finished):
+            def fetched(dest, error):
+                finished()  # network part over: the next queued download starts while this one builds
+                state.cancel.pop(asset_id, None)  # nothing left to cancel
+                if error:
+                    settle(error)
+                    return
+                state.building.add(asset_id)
+                jobs.run(lambda: build(dest), built)
+
+            def built(_, error):
+                state.building.discard(asset_id)
+                settle(error)
+
+            jobs.run(fetch, fetched)
+
+        state.queue.add(asset_id, run)
         return {"FINISHED"}
+
+
+def cancel_download(asset_id):
+    """Stop a running download, or drop a queued one."""
+    if event := state.cancel.get(asset_id):
+        event.set()
+    if state.queue.cancel(asset_id):  # it had not started: nothing will report back, so clean up here
+        state.progress.pop(asset_id, None)
+        state.cancel.pop(asset_id, None)
 
 
 def load_templates(asset_id):
