@@ -122,7 +122,7 @@ class _File:
     def chunks(self):
         return -(-self.size // CHUNK)
 
-    def span(self, i):
+    def span(self, i: int) -> tuple[int, int]:
         """(start, end) inclusive byte range of chunk i."""
         return i * CHUNK, min((i + 1) * CHUNK, self.size) - 1
 
@@ -365,7 +365,8 @@ def fetch_all(files, progress=None, workers=8, refresh=None, cancel=None, speed=
             if not missing:
                 put(f.finish, size)
             for i in missing:
-                put(lambda f=f, i=i: attempt(lambda on: chunk(f, *f.span(i), on)), size)
+                start, end = f.span(i)
+                put(lambda f=f, start=start, end=end: attempt(lambda on: chunk(f, start, end, on)), size)
 
     if needed and files and needed + MARGIN > free_space(files[0][1].parent):
         raise DiskFull("Not enough disk space")

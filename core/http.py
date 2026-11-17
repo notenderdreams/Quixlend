@@ -3,6 +3,7 @@
 import json
 import urllib.error
 import urllib.request
+from typing import Any
 
 UA = "quixlend/0.1"
 
@@ -13,7 +14,7 @@ class HttpError(Exception):
         self.status, self.url, self.body = status, url, body
 
 
-def request(url, body=None, headers=None, method=None, timeout=30):
+def request(url, body=None, headers=None, method=None, timeout=30) -> Any:
     hdrs = {"User-Agent": UA, "Accept": "application/json", **(headers or {})}
     data = None
     if body is not None:
@@ -28,9 +29,9 @@ def request(url, body=None, headers=None, method=None, timeout=30):
     return json.loads(raw) if raw else None
 
 
-def get(url, headers=None):
+def get(url, headers=None) -> Any:
     return request(url, headers=headers)
 
 
-def post(url, body, headers=None):
+def post(url, body, headers=None) -> Any:
     return request(url, body=body, headers=headers, method="POST")

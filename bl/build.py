@@ -10,6 +10,7 @@ import re
 import sys
 import uuid
 from pathlib import Path
+from typing import Any, Literal, cast
 
 import bpy
 
@@ -43,11 +44,18 @@ def find_maps(folder, lod=None):
     return {role: path for role, (_, path) in best.items()}
 
 
+def set_default(socket: bpy.types.NodeSocket, value: Any) -> None:
+    """Every concrete socket type has default_value; the stubs only model the abstract NodeSocket."""
+    socket.default_value = value  # pyright: ignore[reportAttributeAccessIssue]
+
+
 def build_group_material(name, maps, displace=False):
     """Material for any asset type: the texture work lives in a node group named like the material, exposing the tweaks
     (tint, hue, saturation, brightness, contrast, roughness, normal strength, displacement scale); the BSDF stays outside."""
     mat = bpy.data.materials.new(name)
-    nodes, links = mat.node_tree.nodes, mat.node_tree.links
+    tree = mat.node_tree
+    assert tree is not None
+    nodes, links = tree.nodes, tree.links
     bsdf = next(n for n in nodes if n.bl_idname == "ShaderNodeBsdfPrincipled")
     out = next(n for n in nodes if n.bl_idname == "ShaderNodeOutputMaterial")
     coord, mapping = nodes.new("ShaderNodeTexCoord"), nodes.new("ShaderNodeMapping")
@@ -55,17 +63,26 @@ def build_group_material(name, maps, displace=False):
     bsdf.location, out.location = (0, 0), (300, 0)
     links.new(coord.outputs["UV"], mapping.inputs["Vector"])
 
-    ng = bpy.data.node_groups.new(name, "ShaderNodeTree")
+    ng = cast(bpy.types.ShaderNodeTree, bpy.data.node_groups.new(name, "ShaderNodeTree"))
     gl, gi, go = ng.links, ng.nodes.new("NodeGroupInput"), ng.nodes.new("NodeGroupOutput")
     gi.location, go.location = (-1400, 0), (1300, 0)
     face = ng.interface
+    assert face is not None
 
-    def add(label, kind, direction="INPUT", panel=None, default=None, lo=None, hi=None):
+    def add(
+        label,
+        kind,
+        direction: Literal["INPUT", "OUTPUT"] = "INPUT",
+        panel=None,
+        default=None,
+        lo=None,
+        hi=None,
+    ):
         sock = face.new_socket(label, in_out=direction, socket_type=kind, parent=panel)
         if default is not None:
-            sock.default_value = default
+            sock.default_value = default  # pyright: ignore[reportAttributeAccessIssue]
         if lo is not None:
-            sock.min_value, sock.max_value, sock.subtype = lo, hi, "FACTOR"  # a slider
+            sock.min_value, sock.max_value, sock.subtype = lo, hi, "FACTOR"  # a slider  # pyright: ignore[reportAttributeAccessIssue]
         return sock
 
     def node(idname, x, y, **props):
@@ -78,7 +95,7 @@ def build_group_material(name, maps, displace=False):
     def mix(x, y, a, b, fac):
         n = node("ShaderNodeMix", x, y, data_type="RGBA", blend_type="MULTIPLY")
         if isinstance(fac, float):
-            n.inputs["Factor"].default_value = fac
+            set_default(n.inputs["Factor"], fac)
         else:
             gl.new(fac, n.inputs["Factor"])
         gl.new(a, n.inputs["A"])
@@ -97,8 +114,10 @@ def build_group_material(name, maps, displace=False):
         if role not in maps:
             return None
         n = node("ShaderNodeTexImage", -1000, 300 - 280 * row[0], label=role)
-        n.image = bpy.data.images.load(str(maps[role]))
-        n.image.colorspace_settings.name = "sRGB" if color else "Non-Color"
+        image = bpy.data.images.load(str(maps[role]))
+        cast(bpy.types.ShaderNodeTexImage, n).image = image
+        if image.colorspace_settings:
+            image.colorspace_settings.name = "sRGB" if color else "Non-Color"  # pyright: ignore[reportAttributeAccessIssue]
         row[0] += 1
         gl.new(gi.outputs["Vector"], n.inputs["Vector"])
         return n
@@ -121,7 +140,7 @@ def build_group_material(name, maps, displace=False):
         color = mix(-400, 300, color, gi.outputs["Tint"], gi.outputs["Tint Strength"])
         hue = node("ShaderNodeMath", -400, 100, operation="ADD")
         gl.new(gi.outputs["Hue Shift"], hue.inputs[0])
-        hue.inputs[1].default_value = 0.5  # 0.5 is "no shift" for the Hue/Saturation node
+        set_default(hue.inputs[1], 0.5)  # 0.5 is "no shift" for the Hue/Saturation node
         hsv = node("ShaderNodeHueSaturation", -200, 300)
         gl.new(hue.outputs["Value"], hsv.inputs["Hue"])
         gl.new(gi.outputs["Saturation"], hsv.inputs["Saturation"])
@@ -130,23 +149,23 @@ def build_group_material(name, maps, displace=False):
         # Blender's own Bright/Contrast node subtracts in linear space and crushes albedo to black.
         gain = node("ShaderNodeMath", 0, 500, operation="ADD")
         gl.new(gi.outputs["Brightness"], gain.inputs[0])
-        gain.inputs[1].default_value = 1.0
+        set_default(gain.inputs[1], 1.0)
         lit = mix(0, 300, hsv.outputs["Color"], gain.outputs["Value"], 1.0)
         steep = node("ShaderNodeMath", 200, 500, operation="ADD")
         gl.new(gi.outputs["Contrast"], steep.inputs[0])
-        steep.inputs[1].default_value = 1.0
+        set_default(steep.inputs[1], 1.0)
         below = node("ShaderNodeVectorMath", 200, 300, operation="SUBTRACT")
         gl.new(lit, below.inputs[0])
-        below.inputs[1].default_value = (0.18, 0.18, 0.18)
+        set_default(below.inputs[1], (0.18, 0.18, 0.18))
         scaled_c = node("ShaderNodeVectorMath", 400, 300, operation="SCALE")
         gl.new(below.outputs["Vector"], scaled_c.inputs[0])
         gl.new(steep.outputs["Value"], scaled_c.inputs["Scale"])
         above = node("ShaderNodeVectorMath", 600, 300, operation="ADD")
         gl.new(scaled_c.outputs["Vector"], above.inputs[0])
-        above.inputs[1].default_value = (0.18, 0.18, 0.18)
+        set_default(above.inputs[1], (0.18, 0.18, 0.18))
         floor = node("ShaderNodeVectorMath", 800, 300, operation="MAXIMUM")
         gl.new(above.outputs["Vector"], floor.inputs[0])
-        floor.inputs[1].default_value = (0.0, 0.0, 0.0)
+        set_default(floor.inputs[1], (0.0, 0.0, 0.0))
         emit("Base Color", "NodeSocketColor", floor.outputs["Vector"])
     roughness = tex("roughness")
     if roughness:
@@ -173,6 +192,7 @@ def build_group_material(name, maps, displace=False):
         emit("Normal", "NodeSocketVector", nmap.outputs["Normal"])
     if displace:
         height = tex("displacement")
+        assert height is not None  # displace implies the map exists
         add("Displacement Scale", "NodeSocketFloat", panel=displace_panel, default=0.05, lo=0.0, hi=0.5)
         disp = node("ShaderNodeDisplacement", -400, -700)
         gl.new(height.outputs["Color"], disp.inputs["Height"])
@@ -180,7 +200,8 @@ def build_group_material(name, maps, displace=False):
         emit("Displacement", "NodeSocketVector", disp.outputs["Displacement"])
 
     group = nodes.new("ShaderNodeGroup")
-    group.node_tree, group.name, group.label, group.location = ng, name, name, (-330, 0)
+    cast(bpy.types.ShaderNodeGroup, group).node_tree = ng
+    group.name, group.label, group.location = name, name, (-330, 0)
     group.width = 260
     links.new(mapping.outputs["Vector"], group.inputs["Vector"])
     for label, socket in (
@@ -197,7 +218,7 @@ def build_group_material(name, maps, displace=False):
         # leave the translucent lobe visible in the holes).
         trans, blend = nodes.new("ShaderNodeBsdfTranslucent"), nodes.new("ShaderNodeMixShader")
         trans.location, blend.location = (0, -300), (300, 0)
-        blend.inputs["Fac"].default_value = 0.35
+        set_default(blend.inputs["Fac"], 0.35)
         links.new(group.outputs["Translucency"], trans.inputs["Color"])
         links.new(surface, blend.inputs[1])
         links.new(trans.outputs["BSDF"], blend.inputs[2])
@@ -240,7 +261,7 @@ def import_meshes(folder):
         for obj in meshes:
             world = obj.matrix_world.copy()
             obj.parent = None
-            obj.data.transform(world)
+            cast(bpy.types.Mesh, obj.data).transform(world)
             obj.matrix_world.identity()
         for obj in new:
             if obj.type != "MESH":
@@ -249,7 +270,7 @@ def import_meshes(folder):
     return objects, lod
 
 
-def catalog_id(library, asset_type, *sub):
+def catalog_id(library: Path, asset_type: str, *sub: object) -> str:
     """Catalog uuid for Type/Category/Sub, creating it and any missing parents in the library's catalog file."""
     names = [TYPE_LABEL.get(asset_type, asset_type.title())]
     names += [str(n).strip().replace("/", "-").replace(":", "-").title() for n in sub if n and str(n).strip()]
@@ -277,7 +298,7 @@ def set_preview(datablock, folder):
     img.scale(256, 256)
     preview = datablock.preview_ensure()
     preview.image_size = (256, 256)
-    preview.image_pixels_float.foreach_set(img.pixels[:])
+    preview.image_pixels_float.foreach_set(img.pixels[:])  # pyright: ignore[reportIndexIssue]
     bpy.data.images.remove(img)
 
 
@@ -304,7 +325,7 @@ def build(folder, library):
         assets = objects
     elif set(maps) == {"brush"}:
         texture = bpy.data.textures.new(name, "IMAGE")
-        texture.image = bpy.data.images.load(str(maps["brush"]))
+        cast(bpy.types.ImageTexture, texture).image = bpy.data.images.load(str(maps["brush"]))
         brush = bpy.data.brushes.new(name, mode="SCULPT")
         brush.texture = texture
         assets = [brush]
@@ -315,6 +336,7 @@ def build(folder, library):
     for asset in assets:
         asset.asset_mark()
         data = asset.asset_data
+        assert data is not None  # asset_mark() just created it
         data.author = "Quixel Megascans"
         data.description = f"Megascans {asset_id}"
         data.catalog_id = catalog

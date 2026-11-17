@@ -1,13 +1,13 @@
 """Preferences, operators and the 3D Viewport sidebar panel."""
 
 import json
-import math
 import shutil
 import subprocess
 import threading
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 import bpy
 import bpy.utils.previews
@@ -17,12 +17,17 @@ from ..core import api, auth, download, http
 from ..core.scheduler import Scheduler
 from . import jobs
 
-ADDON = __package__.rpartition(".")[0]
+if TYPE_CHECKING:
+    from bpy.stub_internal.rna_enums import OperatorReturnItems
+
+type Result = set[Literal[OperatorReturnItems]]  # what an operator method returns
+
+ADDON = (__package__ or "").rpartition(".")[0]
 HOME = Path.home() / ".quixlend"
 BUILD_SCRIPT = str(Path(__file__).with_name("build.py"))
 PER_PAGE = 24
-_icons = None
-_big = None  # large previews for the details popup
+_icons: bpy.utils.previews.ImagePreviewCollection | None = None
+_big: bpy.utils.previews.ImagePreviewCollection | None = None  # large previews for the details popup
 TYPES = [
     ("ALL", "All Types", ""),
     ("3d", "3D Assets", ""),
@@ -36,25 +41,67 @@ session = auth.Session(HOME / "auth.json")
 client = api.Client(session)
 
 
+class _HasLayout(Protocol):
+    @property
+    def layout(self) -> bpy.types.UILayout | None: ...
+
+
+def layout_of(ui: _HasLayout) -> bpy.types.UILayout:
+    """`self.layout` is only None outside draw(); inside it, never."""
+    assert ui.layout is not None
+    return ui.layout
+
+
+if TYPE_CHECKING:
+
+    class QuixlendWindowManager(bpy.types.WindowManager):
+        """Typed view of the properties register() adds to WindowManager."""
+
+        quixlend_query: str
+        quixlend_type: str
+        quixlend_code: str
+
+
+def wm_of(context: bpy.types.Context) -> "QuixlendWindowManager":
+    return cast("QuixlendWindowManager", context.window_manager)
+
+
+def icons() -> bpy.utils.previews.ImagePreviewCollection:
+    assert _icons is not None, "addon is not registered"
+    return _icons
+
+
+def big() -> bpy.utils.previews.ImagePreviewCollection:
+    assert _big is not None, "addon is not registered"
+    return _big
+
+
 class state:
-    hits = []  # [{id, name, image}] image = thumbnail datablock (or None)
+    hits: list[dict[str, Any]] = []  # [{id, name, image}] image = thumbnail datablock (or None)
     panel_open = False  # set by the panel each time it draws; tells the grid overlay to draw
     seq = 0  # id of the latest search
-    page = pages = 0
+    page = 0
+    pages = 0
     status = ""
     loading = False  # a search/page fetch is in flight
-    owned = None  # set of asset ids, None until fetched
-    local = set()  # ids already built into the library
-    library_bytes = None  # disk used by downloaded assets, None until measured
-    progress = {}  # id -> 0..1 while downloading
-    speed = {}  # id -> (bytes/s, seconds left) while downloading; None parts until known
+    owned: set[str] | None = None  # set of asset ids, None until fetched
+    local: set[str] = set()  # ids already built into the library
+    library_bytes: int | None = None  # disk used by downloaded assets, None until measured
+    progress: dict[str, float] = {}  # id -> 0..1 while downloading
+    speed: dict[
+        str, tuple[float | None, float | None]
+    ] = {}  # id -> (bytes/s, seconds left) while downloading; None parts until known
     queue = Scheduler(2)  # at most two assets download at once; the rest wait in click order
-    building = set()  # ids past the network part, being built into the library
-    cancel = {}  # id -> threading.Event, present only while the network part can still be cancelled
-    errors = {}  # id -> message
-    sizes = {}  # (id, resolution) -> download bytes
-    opening = None  # id of the card whose details are loading
-    assets = {}  # id -> extended asset (None if the fetch failed), for size estimates
+    building: set[str] = set()  # ids past the network part, being built into the library
+    cancel: dict[
+        str, threading.Event
+    ] = {}  # id -> threading.Event, present only while the network part can still be cancelled
+    errors: dict[str, str] = {}  # id -> message
+    sizes: dict[tuple[str, int], int] = {}  # (id, resolution) -> download bytes
+    opening: str | None = None  # id of the card whose details are loading
+    assets: dict[
+        str, dict[str, Any] | None
+    ] = {}  # id -> extended asset (None if the fetch failed), for size estimates
 
 
 _pool = ThreadPoolExecutor(4)
@@ -82,8 +129,17 @@ def download_size(asset_id, fetch=True):
     return state.sizes[key]
 
 
-def prefs():
-    return bpy.context.preferences.addons[ADDON].preferences
+if TYPE_CHECKING:
+
+    class Prefs(bpy.types.AddonPreferences):
+        """Typed view of QuixlendPreferences, whose properties the stubs cannot see."""
+
+        library: str
+        resolution: str
+
+
+def prefs() -> "Prefs":
+    return cast("Prefs", bpy.context.preferences.addons[ADDON].preferences)
 
 
 def library() -> Path:
@@ -177,13 +233,13 @@ def _thumb(hit):
     return path
 
 
-def res_label():
-    items = prefs().bl_rna.properties["resolution"].enum_items
+def res_label() -> str:
+    items = cast(bpy.types.EnumProperty, prefs().bl_rna.properties["resolution"]).enum_items
     return items[prefs().resolution].name
 
 
-def draw_res_menu(self, context):
-    self.layout.prop(prefs(), "resolution", expand=True)
+def draw_res_menu(self: bpy.types.Menu, context: bpy.types.Context):
+    layout_of(self).prop(prefs(), "resolution", expand=True)
 
 
 def thumb_image(hit):
@@ -199,7 +255,7 @@ def thumb_image(hit):
 
 def start_search(page=0, append=False):
     """Fetch a result page. Results of a search superseded by a newer one are dropped."""
-    wm = bpy.context.window_manager
+    wm = wm_of(bpy.context)
     state.seq += 1
     seq = state.seq
     query, asset_type = wm.quixlend_query, wm.quixlend_type
@@ -246,9 +302,9 @@ class QUIXLEND_OT_search(bpy.types.Operator):
     bl_idname = "quixlend.search"
     bl_label = "Search Megascans"
     bl_description = "Search the Megascans catalog"
-    more: BoolProperty(default=False, description="Append the next page instead of starting over")
+    more: BoolProperty(default=False, description="Append the next page instead of starting over")  # pyright: ignore[reportInvalidTypeForm]
 
-    def execute(self, context):
+    def execute(self, context: bpy.types.Context) -> Result:
         if self.more:
             start_search(state.page + 1, append=True)
         else:
@@ -263,9 +319,9 @@ class QUIXLEND_OT_download(bpy.types.Operator):
     bl_idname = "quixlend.download"
     bl_label = "Download"
     bl_description = "Download this asset and add it to the Asset Browser"
-    asset_id: StringProperty()
+    asset_id: StringProperty()  # pyright: ignore[reportInvalidTypeForm]
 
-    def execute(self, context):
+    def execute(self, context: bpy.types.Context) -> Result:
         asset_id, root = self.asset_id, library()
         if asset_id in state.progress:
             return {"FINISHED"}  # already queued, downloading or building
@@ -365,7 +421,7 @@ def load_templates(asset_id):
     objects = [o for o in bpy.data.objects if o.get("quixlend_id") == asset_id and o.get("quixlend_source")]
     materials = [m for m in bpy.data.materials if m.get("quixlend_id") == asset_id]
     if not objects and not materials:
-        with bpy.data.libraries.load(str(blend), assets_only=True) as (src, dst):
+        with bpy.data.libraries.load(str(blend), assets_only=True) as (src, dst):  # pyright: ignore[reportGeneralTypeIssues]
             dst.objects, dst.materials = src.objects, src.materials
         objects, materials = dst.objects, dst.materials
         for block in objects + materials:
@@ -397,7 +453,7 @@ def place(context, asset_id, location=None, target=None, pick=None):
         if collection not in context.scene.collection.children_recursive:
             context.scene.collection.children.link(collection)
         for source in sources:
-            obj = source.copy()
+            obj = cast(bpy.types.Object, source.copy())
             del obj["quixlend_source"]
             collection.objects.link(obj)
             obj.location = base
@@ -442,11 +498,11 @@ def open_details(asset_id, window, area):
         state.opening = None
         if not error:
             path, state.assets[asset_id] = result
-            if not _big.get(asset_id):
-                _big.load(asset_id, str(path), "IMAGE")
+            if not big().get(asset_id):
+                big().load(asset_id, str(path), "IMAGE")
         region = next(r for r in area.regions if r.type == "WINDOW")
         with bpy.context.temp_override(window=window, area=area, region=region):
-            bpy.ops.quixlend.details("INVOKE_DEFAULT", asset_id=asset_id)
+            bpy.ops.quixlend.details("INVOKE_DEFAULT", asset_id=asset_id)  # pyright: ignore[reportAttributeAccessIssue]
 
     jobs.run(work, done)
 
@@ -455,19 +511,19 @@ class QUIXLEND_OT_details(bpy.types.Operator):
     bl_idname = "quixlend.details"
     bl_label = "Asset Details"
     bl_options = {"INTERNAL"}
-    asset_id: StringProperty()
+    asset_id: StringProperty()  # pyright: ignore[reportInvalidTypeForm]
 
-    def invoke(self, context, event):
+    def invoke(self, context: bpy.types.Context, event: bpy.types.Event) -> Result:
         self.hit = next(h for h in state.hits if h["id"] == self.asset_id)
-        preview = _big.get(self.asset_id)
+        preview = big().get(self.asset_id)
         self.icon = preview.icon_id if preview else 0
         asset = state.assets.get(self.asset_id)
         self.info = api.asset_info(asset) if asset else [("Details unavailable", "")]
         self.size = download_size(self.asset_id, fetch=False)
         return context.window_manager.invoke_popup(self, width=420)
 
-    def draw(self, context):
-        layout, _st = self.layout, state
+    def draw(self, context: bpy.types.Context):
+        layout = layout_of(self)
         if self.icon:
             layout.template_icon(icon_value=self.icon, scale=14)
         layout.label(text=self.hit["name"])
@@ -480,7 +536,7 @@ class QUIXLEND_OT_details(bpy.types.Operator):
             row.label(text=key)
             row.label(text=value)
 
-    def execute(self, context):
+    def execute(self, context: bpy.types.Context) -> Result:
         return {"FINISHED"}
 
 
@@ -489,7 +545,7 @@ class QUIXLEND_OT_login_open(bpy.types.Operator):
     bl_label = "Open Epic Login"
     bl_description = "Open the Epic Games sign-in page in your browser"
 
-    def execute(self, context):
+    def execute(self, context: bpy.types.Context) -> Result:
         bpy.ops.wm.url_open(url=auth.LOGIN_URL)
         return {"FINISHED"}
 
@@ -499,8 +555,8 @@ class QUIXLEND_OT_login(bpy.types.Operator):
     bl_label = "Log In"
     bl_description = "Finish signing in with the pasted authorization code"
 
-    def execute(self, context):
-        wm = context.window_manager
+    def execute(self, context: bpy.types.Context) -> Result:
+        wm = wm_of(context)
         code = wm.quixlend_code
         state.status = "Logging in…"
 
@@ -521,7 +577,7 @@ class QUIXLEND_OT_logout(bpy.types.Operator):
     bl_label = "Log Out"
     bl_description = "Forget the stored Quixel session"
 
-    def execute(self, context):
+    def execute(self, context: bpy.types.Context) -> Result:
         session.logout()
         (HOME / "owned.json").unlink(missing_ok=True)
         state.owned, state.status = None, ""
@@ -534,10 +590,10 @@ class QUIXLEND_OT_clean(bpy.types.Operator):
     bl_description = "Delete every downloaded asset from the library folder"
 
     @classmethod
-    def poll(cls, context):
+    def poll(cls, context: bpy.types.Context) -> bool:
         return not (state.progress or state.building)
 
-    def invoke(self, context, event):
+    def invoke(self, context: bpy.types.Context, event: bpy.types.Event) -> Result:
         return context.window_manager.invoke_confirm(
             self,
             event,
@@ -547,7 +603,7 @@ class QUIXLEND_OT_clean(bpy.types.Operator):
             confirm_text="Delete",
         )
 
-    def execute(self, context):
+    def execute(self, context: bpy.types.Context) -> Result:
         root = library() / "Quixlend"
 
         def work():
@@ -577,89 +633,22 @@ def _size(n):
 
 class QuixlendPreferences(bpy.types.AddonPreferences):
     bl_idname = ADDON
-    library: StringProperty(
+    library: StringProperty(  # pyright: ignore[reportInvalidTypeForm]
         name="Library",
         subtype="DIR_PATH",
         default=str(Path.home() / "Documents" / "Megascans Library"),
         description="Folder downloads are stored in; registered as an asset library",
     )
-    resolution: EnumProperty(
+    resolution: EnumProperty(  # pyright: ignore[reportInvalidTypeForm]
         name="Texture Resolution",
         default="4096",
         items=[("1024", "1K", ""), ("2048", "2K", ""), ("4096", "4K", ""), ("8192", "8K", "")],
     )
 
-    def draw(self, context):
-        self.layout.prop(self, "library")
-        self.layout.prop(self, "resolution")
-
-
-class QUIXLEND_PT_browser(bpy.types.Panel):
-    bl_label = "Quixlend"
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = "Quixlend"
-
-    def draw_header(self, context):
-        self.layout.label(text="", icon_value=_icons["quixel"].icon_id)
-
-    def draw_header_preset(self, context):
-        self.layout.popover(panel="QUIXLEND_PT_settings", text="", icon="PREFERENCES")
-
-    def draw(self, context):
-        layout, wm = self.layout, context.window_manager
-        layout.use_property_decorate = False
-        if not session.logged_in:
-            col = layout.column(align=True)
-            col.label(text="Your Megascans library", icon="ASSET_MANAGER")
-            col.label(text="Sign in with your Epic Games account.")
-            layout.separator()
-            layout.operator("quixlend.login_open", text="Sign In with Epic Games", icon="URL")
-            col = layout.column(align=True)
-            col.label(text="Paste the authorization code:")
-            col.prop(wm, "quixlend_code", text="", placeholder="Authorization code")
-            row = col.row()
-            row.enabled = bool(wm.quixlend_code.strip())
-            row.operator("quixlend.login", text="Connect Account", icon="CHECKMARK")
-            if state.status:
-                layout.label(text=state.status, icon="INFO")
-            return
-
-        row = layout.row(align=True)
-        row.scale_y = 1.2
-        row.prop(wm, "quixlend_query", text="", icon="VIEWZOOM", placeholder="Search Megascans")
-        row.operator("quixlend.search", text="", icon="FILE_REFRESH")
-        row = layout.row(align=True)
-        row.prop(wm, "quixlend_type", text="")
-        row.prop(prefs(), "resolution", text="")
-        row = layout.row()
-        row.label(text=state.status or "Browse the Megascans catalog", icon="ASSET_MANAGER")
-
-        # The cards are drawn by sidebar.draw_grid into this reserved empty space.
-        from . import sidebar
-
-        m = sidebar.metrics(context.region)
-        blank = layout.column(align=True)
-        for _ in range(math.ceil(m["height"] / m["unit"])):
-            blank.label(text="")
-        state.panel_open = True
-        if not state.hits:
-            box = layout.box()
-            box.label(
-                text="No matching assets" if state.status == "No results" else "Materials, models and plants",
-                icon="VIEWZOOM",
-            )
-            box.label(
-                text="Try another search or asset type."
-                if state.status == "No results"
-                else "Search by name or choose an asset type."
-            )
-        if state.page + 1 < state.pages:
-            layout.label(text="Fetching more assets…", icon="SORTTIME")
-        if state.hits:
-            col = layout.column(align=True)
-            col.enabled = False
-            col.label(text="Click to download · Drag to place", icon="MOUSE_LMB")
+    def draw(self, context: bpy.types.Context):
+        layout = layout_of(self)
+        layout.prop(self, "library")
+        layout.prop(self, "resolution")
 
 
 class QUIXLEND_PT_settings(bpy.types.Panel):
@@ -670,8 +659,8 @@ class QUIXLEND_PT_settings(bpy.types.Panel):
     bl_options = {"INSTANCED"}
     bl_ui_units_x = 22
 
-    def draw(self, context):
-        layout = self.layout
+    def draw(self, context: bpy.types.Context):
+        layout = layout_of(self)
         layout.use_property_split = True
         layout.use_property_decorate = False
         layout.label(text="Asset Library", icon="ASSET_MANAGER")
@@ -704,7 +693,6 @@ CLASSES = (
     QUIXLEND_OT_logout,
     QUIXLEND_OT_clean,
     QUIXLEND_PT_settings,
-    QUIXLEND_PT_browser,
 )
 
 
@@ -727,35 +715,36 @@ def _search_update(self, context):
     start_search()
 
 
-def _asset_browser_header(self, context):
-    params = context.space_data.params
+def _asset_browser_header(self: bpy.types.Menu, context: bpy.types.Context):
+    space = cast(bpy.types.SpaceFileBrowser, context.space_data)
+    params = space.params
     ref = getattr(params, "asset_library_reference", None) or getattr(params, "asset_library_ref", "")
     if ref == "Megascans":
-        self.layout.label(text="Megascans", icon_value=_icons["quixel"].icon_id)
+        layout_of(self).label(text="Megascans", icon_value=icons()["quixel"].icon_id)
 
 
 def register():
     global _icons, _big
     _icons = bpy.utils.previews.new()
     _big = bpy.utils.previews.new()
-    _icons.load("quixel", str(Path(__file__).parents[1] / "assets" / "quixel.png"), "IMAGE")
+    icons().load("quixel", str(Path(__file__).parents[1] / "assets" / "quixel.png"), "IMAGE")
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     wm = bpy.types.WindowManager
-    wm.quixlend_query = StringProperty(name="Search", update=_search_update, options={"SKIP_SAVE"})
-    wm.quixlend_type = EnumProperty(name="Type", items=TYPES, update=_search_update)
-    wm.quixlend_code = StringProperty(name="Authorization Code", options={"SKIP_SAVE"})
+    wm.quixlend_query = StringProperty(name="Search", update=_search_update, options={"SKIP_SAVE"})  # pyright: ignore[reportAttributeAccessIssue]
+    wm.quixlend_type = EnumProperty(name="Type", items=TYPES, update=_search_update)  # pyright: ignore[reportAttributeAccessIssue]
+    wm.quixlend_code = StringProperty(name="Authorization Code", options={"SKIP_SAVE"})  # pyright: ignore[reportAttributeAccessIssue]
     bpy.app.handlers.load_post.append(_file_loaded)
-    bpy.types.ASSETBROWSER_MT_editor_menus.append(_asset_browser_header)
+    bpy.types.ASSETBROWSER_MT_editor_menus.append(_asset_browser_header)  # pyright: ignore[reportArgumentType]
     bpy.app.timers.register(_startup, first_interval=0.5, persistent=True)
 
 
 def unregister():
     global _icons, _big
     bpy.app.handlers.load_post.remove(_file_loaded)
-    bpy.types.ASSETBROWSER_MT_editor_menus.remove(_asset_browser_header)
+    bpy.types.ASSETBROWSER_MT_editor_menus.remove(_asset_browser_header)  # pyright: ignore[reportArgumentType]
     wm = bpy.types.WindowManager
-    del wm.quixlend_query, wm.quixlend_type, wm.quixlend_code
+    del wm.quixlend_query, wm.quixlend_type, wm.quixlend_code  # pyright: ignore[reportAttributeAccessIssue]
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)
     bpy.utils.previews.remove(_icons)

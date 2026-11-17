@@ -43,7 +43,7 @@ class FetchAll(unittest.TestCase):
 
     def test_size_mismatch_fails_and_leaves_no_finished_file(self):
         with TestServer(FILES) as server:
-            bad = [(url, path, size + 1) for url, path, size in plan(server, self.dest)]
+            bad = [(url, path, (size or 0) + 1) for url, path, size in plan(server, self.dest)]
             with self.assertRaises(download.DownloadError):
                 download.fetch_all(bad)
         self.assertFalse(any(p.exists() for _, p, _ in bad))
@@ -106,7 +106,7 @@ class Chunked(unittest.TestCase):
 
     def test_wrong_size_fails_without_a_finished_file(self):
         with TestServer(FILES) as server:
-            bad = [(url, path, size + 1) for url, path, size in plan(server, self.dest)]
+            bad = [(url, path, (size or 0) + 1) for url, path, size in plan(server, self.dest)]
             with self.assertRaises(download.DownloadError):
                 download.fetch_all(bad)
         self.assertFalse((self.dest / "a/big.bin").exists())
@@ -311,7 +311,7 @@ class Resume(unittest.TestCase):
     def test_wrong_final_size_after_resume_leaves_no_finished_file(self):
         with TestServer(FILES) as server:
             self.interrupt(server)
-            bad = [(url, path, size + 1) for url, path, size in plan(server, self.dest)]
+            bad = [(url, path, (size or 0) + 1) for url, path, size in plan(server, self.dest)]
             with self.assertRaises(download.DownloadError):
                 download.fetch_all(bad, workers=1)
         self.assertFalse(self.big.exists())
@@ -443,6 +443,7 @@ class Speed(unittest.TestCase):
             bps, eta = rate.update(1_100_000, 2_000_000)
         finally:
             download._now = time.monotonic
+        assert bps is not None and eta is not None
         self.assertAlmostEqual(bps, 50_000)
         self.assertAlmostEqual(eta, 900_000 / 50_000)
 

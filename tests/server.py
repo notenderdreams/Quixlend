@@ -9,12 +9,14 @@ class TestServer:
     def __init__(self, files, ranges=True):
         self.files = files  # path -> bytes
         self.ranges = ranges  # honour Range headers
-        self.fail = {}  # request number (1-based) -> status code to answer with
+        self.fail: dict[int, int] = {}  # request number (1-based) -> status code to answer with
         self.truncate = set()  # request numbers answered with half a body
         self.delay = 0.0  # seconds to wait before answering
-        self.bps = None  # throttle each response body to this many bytes per second
+        self.bps: int | None = None  # throttle each response body to this many bytes per second
         self.deny = 0  # answer 403 to this many requests first
-        self.token = None  # when set, only URLs carrying ?t=<token> are valid; others get 403 (expired links)
+        self.token: str | None = (
+            None  # when set, only URLs carrying ?t=<token> are valid; others get 403 (expired links)
+        )
         self.log = []  # [{"path", "range", "status", "conn"}]
         self._lock = threading.Lock()
         outer = self
@@ -22,7 +24,7 @@ class TestServer:
         class Handler(BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
 
-            def log_message(self, *args):
+            def log_message(self, format, *args):
                 pass
 
             def do_GET(self):

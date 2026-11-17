@@ -1,0 +1,15 @@
+{
+  "languages": {
+    "Python": {
+      "language_servers": ["basedpyright", "ruff", "!pyright", "!pyrefly", "!ty", "..."]
+    }
+  },
+  "lsp": {
+    "basedpyright": {
+      "settings": {
+        "python": { "pythonPath": ".venv/bin/python" },
+        "basedpyright.analysis": { "typeCheckingMode": "basic" }
+      }
+    }
+  }
+}

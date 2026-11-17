@@ -7,6 +7,7 @@ this module draws the cards into it and handles the mouse itself.
 import math
 import random
 import time
+from typing import TYPE_CHECKING, Any, cast
 
 import blf
 import bpy
@@ -20,8 +21,8 @@ from . import ui
 CATEGORY = "Quixlend"
 HEADER_UNITS = 5.5  # panel header + search/filter/status rows, in widget units
 
-drag = None  # {"hit", "x", "y"} in window coordinates while a card is being dragged
-hover = None  # (region pointer, asset id)
+drag: dict[str, Any] | None = None  # {"hit", "x", "y"} in window coordinates while a card is being dragged
+hover: tuple[int, str, str | None] | None = None  # (region pointer, asset id, zone)
 
 
 def scale():
@@ -112,7 +113,7 @@ def _inside(rect, px, py):
     return rect and rect[0] <= px <= rect[0] + rect[2] and rect[1] <= py <= rect[1] + rect[3]
 
 
-def zone_at(region, px, py):
+def zone_at(region, px, py) -> tuple[dict[str, Any] | None, str | None]:
     """(hit, zone) under the pointer; zone is "main", "res" or None (the image part)."""
     m, items = cells(region)
     for hit, cx, cy in items:
@@ -133,12 +134,15 @@ def active(region):
 # ---- drawing ---------------------------------------------------------------
 
 
+def _fan(shader, content):
+    """Triangle-fan batch; Blender accepts "TRI_FAN" though the stubs omit it."""
+    return batch_for_shader(shader, "TRI_FAN", content)  # pyright: ignore[reportArgumentType]
+
+
 def _rect(x, y, w, h, color):
     shader = gpu.shader.from_builtin("UNIFORM_COLOR")
     shader.uniform_float("color", color)
-    batch_for_shader(shader, "TRI_FAN", {"pos": ((x, y), (x + w, y), (x + w, y + h), (x, y + h))}).draw(
-        shader
-    )
+    _fan(shader, {"pos": ((x, y), (x + w, y), (x + w, y + h), (x, y + h))}).draw(shader)
 
 
 def _rrect(x, y, w, h, radius, color):
@@ -157,15 +161,14 @@ def _rrect(x, y, w, h, radius, color):
         ]
     shader = gpu.shader.from_builtin("UNIFORM_COLOR")
     shader.uniform_float("color", color)
-    batch_for_shader(shader, "TRI_FAN", {"pos": [(x + w / 2, y + h / 2), *pts, pts[0]]}).draw(shader)
+    _fan(shader, {"pos": [(x + w / 2, y + h / 2), *pts, pts[0]]}).draw(shader)
 
 
 def _image(image, x, y, w, h):
     shader = gpu.shader.from_builtin("IMAGE")
     shader.uniform_sampler("image", gpu.texture.from_image(image))
-    batch_for_shader(
+    _fan(
         shader,
-        "TRI_FAN",
         {
             "pos": ((x, y), (x + w, y), (x + w, y + h), (x, y + h)),
             "texCoord": ((0, 0), (1, 0), (1, 1), (0, 1)),
@@ -343,9 +346,8 @@ def _loader(x, y, card):
         angle = 2 * math.pi * i / n
         shader.uniform_float("color", (1, 1, 1, 0.15 + 0.85 * ((head - i) % n) / n))
         px, py, d = cx + radius * math.cos(angle), cy + radius * math.sin(angle), 1.8 * s
-        batch_for_shader(
+        _fan(
             shader,
-            "TRI_FAN",
             {"pos": ((px - d, py - d), (px + d, py - d), (px + d, py + d), (px - d, py + d))},
         ).draw(shader)
     ui.jobs.dirty.set()  # keep redrawing while it spins
@@ -368,7 +370,7 @@ def draw_grid():
         _rect(x, y - m["label"], card, m["label"], colors["footer"])
         _rect(x, y, card, card, (0, 0, 0, 1))
         if image := ui.thumb_image(hit):
-            width, height = image.size
+            width, height = cast("tuple[int, int]", image.size)
             fit = (card - 4 * s) / max(width, height, 1)
             w, h = width * fit, height * fit
             _image(image, x + (card - w) / 2, y + (card - h) / 2, w, h)
@@ -377,8 +379,8 @@ def draw_grid():
             _text(error, x + 6 * s, y + 4.5 * s, 10 * s, (1, 1, 1, 1), card - 12 * s)
         if ui.state.opening == asset_id:
             _loader(x, y, card)
-        over = hover[:2] == (region.as_pointer(), asset_id) if hover else False
-        zone = hover[2] if over else None
+        over = hover is not None and hover[:2] == (region.as_pointer(), asset_id)
+        zone = hover[2] if hover and over else None
         _rect(x, y + card - 20 * s, card, 20 * s, (0, 0, 0, 0.6))
         _text(
             hit["name"],
@@ -443,7 +445,7 @@ def preview(asset_id, max_edges=60000):
     if key not in batches:
         import numpy as np
 
-        mesh = obj.data
+        mesh = cast(bpy.types.Mesh, obj.data)
         co = np.empty(len(mesh.vertices) * 3, np.float32)
         mesh.vertices.foreach_get("co", co)
         ed = np.empty(len(mesh.edges) * 2, np.int32)
@@ -452,7 +454,7 @@ def preview(asset_id, max_edges=60000):
         if len(ed) > max_edges:
             ed = ed[:: math.ceil(len(ed) / max_edges)]
         shader = gpu.shader.from_builtin("UNIFORM_COLOR")
-        batches[key] = batch_for_shader(shader, "LINES", {"pos": co.reshape(-1, 3)[ed.ravel()]})
+        batches[key] = batch_for_shader(shader, "LINES", {"pos": co.reshape(-1, 3)[ed.ravel()]})  # pyright: ignore[reportArgumentType]
     return {"name": obj.name, "batch": batches[key], "basis": obj.matrix_basis.copy()}
 
 
@@ -494,7 +496,7 @@ class QUIXLEND_OT_hover(bpy.types.Operator):
     bl_label = "Highlight Asset"
     bl_options = {"INTERNAL"}
 
-    def invoke(self, context, event):
+    def invoke(self, context: bpy.types.Context, event: bpy.types.Event) -> ui.Result:
         global hover
         region = context.region
         hit, zone = (
@@ -515,18 +517,24 @@ class QUIXLEND_OT_card(bpy.types.Operator):
     bl_description = "Click to download; drag a downloaded asset into the scene"
     bl_options = {"UNDO"}
 
-    def invoke(self, context, event):
+    if TYPE_CHECKING:  # set in invoke(); declared here for the type checker only
+        hit: dict[str, Any]
+        zone: str | None
+        area: bpy.types.Area
+        start: tuple[int, int]
+
+    def invoke(self, context: bpy.types.Context, event: bpy.types.Event) -> ui.Result:
         region = context.region
         if not region or not active(region):
             return {"PASS_THROUGH"}
-        self.hit, self.zone = zone_at(region, event.mouse_region_x, event.mouse_region_y)
-        if not self.hit:
+        hit, self.zone = zone_at(region, event.mouse_region_x, event.mouse_region_y)
+        if not hit or not context.area:
             return {"PASS_THROUGH"}
-        self.area, self.start = context.area, (event.mouse_x, event.mouse_y)
+        self.hit, self.area, self.start = hit, context.area, (event.mouse_x, event.mouse_y)
         context.window_manager.modal_handler_add(self)
         return {"RUNNING_MODAL"}
 
-    def modal(self, context, event):
+    def modal(self, context: bpy.types.Context, event: bpy.types.Event) -> ui.Result:
         global drag
         asset_id, st = self.hit["id"], ui.state
         if event.type == "MOUSEMOVE":
@@ -556,7 +564,7 @@ class QUIXLEND_OT_card(bpy.types.Operator):
                     self.import_at_cursor(context)
                 elif asset_id not in st.progress and (st.owned is None or asset_id in st.owned):
                     st.errors.pop(asset_id, None)
-                    bpy.ops.quixlend.download(asset_id=asset_id)
+                    bpy.ops.quixlend.download(asset_id=asset_id)  # pyright: ignore[reportAttributeAccessIssue]
             return {"FINISHED"}
         elif event.type in {"ESC", "RIGHTMOUSE"}:
             drag = None
@@ -573,7 +581,9 @@ class QUIXLEND_OT_card(bpy.types.Operator):
         over_sidebar = sidebar.x <= mx <= sidebar.x + sidebar.width
         if over_sidebar or not (0 <= x <= region.width and 0 <= y <= region.height):
             return None
-        rv3d = self.area.spaces.active.region_3d
+        rv3d = cast(bpy.types.SpaceView3D, self.area.spaces.active).region_3d
+        if rv3d is None:
+            return None
         origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, (x, y))
         direction = view3d_utils.region_2d_to_vector_3d(region, rv3d, (x, y))
         hit, location, _, _, target, _ = context.scene.ray_cast(
@@ -616,7 +626,76 @@ class QUIXLEND_OT_card(bpy.types.Operator):
 _handles = []
 
 
+class QUIXLEND_PT_browser(bpy.types.Panel):
+    bl_label = "Quixlend"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Quixlend"
+
+    def draw_header(self, context: bpy.types.Context):
+        ui.layout_of(self).label(text="", icon_value=ui.icons()["quixel"].icon_id)
+
+    def draw_header_preset(self, context: bpy.types.Context):
+        ui.layout_of(self).popover(panel="QUIXLEND_PT_settings", text="", icon="PREFERENCES")
+
+    def draw(self, context: bpy.types.Context):
+        layout, wm = ui.layout_of(self), ui.wm_of(context)
+        layout.use_property_decorate = False
+        if not ui.session.logged_in:
+            col = layout.column(align=True)
+            col.label(text="Your Megascans library", icon="ASSET_MANAGER")
+            col.label(text="Sign in with your Epic Games account.")
+            layout.separator()
+            layout.operator("quixlend.login_open", text="Sign In with Epic Games", icon="URL")
+            col = layout.column(align=True)
+            col.label(text="Paste the authorization code:")
+            col.prop(wm, "quixlend_code", text="", placeholder="Authorization code")
+            row = col.row()
+            row.enabled = bool(wm.quixlend_code.strip())
+            row.operator("quixlend.login", text="Connect Account", icon="CHECKMARK")
+            if ui.state.status:
+                layout.label(text=ui.state.status, icon="INFO")
+            return
+
+        row = layout.row(align=True)
+        row.scale_y = 1.2
+        row.prop(wm, "quixlend_query", text="", icon="VIEWZOOM", placeholder="Search Megascans")
+        row.operator("quixlend.search", text="", icon="FILE_REFRESH")
+        row = layout.row(align=True)
+        row.prop(wm, "quixlend_type", text="")
+        row.prop(ui.prefs(), "resolution", text="")
+        row = layout.row()
+        row.label(text=ui.state.status or "Browse the Megascans catalog", icon="ASSET_MANAGER")
+
+        # The cards are drawn by sidebar.draw_grid into this reserved empty space.
+        m = metrics(context.region)
+        blank = layout.column(align=True)
+        for _ in range(math.ceil(m["height"] / m["unit"])):
+            blank.label(text="")
+        ui.state.panel_open = True
+        if not ui.state.hits:
+            box = layout.box()
+            box.label(
+                text="No matching assets"
+                if ui.state.status == "No results"
+                else "Materials, models and plants",
+                icon="VIEWZOOM",
+            )
+            box.label(
+                text="Try another search or asset type."
+                if ui.state.status == "No results"
+                else "Search by name or choose an asset type."
+            )
+        if ui.state.page + 1 < ui.state.pages:
+            layout.label(text="Fetching more assets…", icon="SORTTIME")
+        if ui.state.hits:
+            col = layout.column(align=True)
+            col.enabled = False
+            col.label(text="Click to download · Drag to place", icon="MOUSE_LMB")
+
+
 def register():
+    bpy.utils.register_class(QUIXLEND_PT_browser)
     bpy.utils.register_class(QUIXLEND_OT_hover)
     bpy.utils.register_class(QUIXLEND_OT_card)
     space = bpy.types.SpaceView3D
@@ -646,3 +725,4 @@ def unregister():
     _handles.clear()
     bpy.utils.unregister_class(QUIXLEND_OT_card)
     bpy.utils.unregister_class(QUIXLEND_OT_hover)
+    bpy.utils.unregister_class(QUIXLEND_PT_browser)

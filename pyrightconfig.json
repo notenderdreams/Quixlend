@@ -1,0 +1,14 @@
+{
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.13",
+  "include": [
+    "bl",
+    "core",
+    "tests",
+    "__init__.py"
+  ],
+  "reportMissingModuleSource": "none",
+  "typeCheckingMode": "standard",
+  "reportImportCycles": "warning"
+}
