@@ -10,7 +10,8 @@ class TestServer:
         self.fail = {}          # request number (1-based) -> status code to answer with
         self.truncate = set()   # request numbers answered with half a body
         self.delay = 0.0        # seconds to wait before answering
-        self.deny = 0           # answer 403 to this many requests first (e.g. expired links)
+        self.deny = 0           # answer 403 to this many requests first
+        self.token = None       # when set, only URLs carrying ?t=<token> are valid; others get 403 (expired links)
         self.log = []           # [{"path", "range", "status", "conn"}]
         self._lock = threading.Lock()
         outer = self
@@ -49,7 +50,8 @@ class TestServer:
             entry = {"path": h.path.lstrip("/").split("?")[0], "range": h.headers.get("Range"), "status": None,
                      "conn": h.client_address[1]}
             self.log.append(entry)
-            forced = self.fail.get(number) or (403 if self.deny else None)
+            stale = self.token is not None and h.path.partition("?t=")[2] != self.token
+            forced = self.fail.get(number) or (403 if self.deny or stale else None)
             if self.deny and not self.fail.get(number):
                 self.deny -= 1
         if self.delay:

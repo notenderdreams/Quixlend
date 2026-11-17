@@ -240,9 +240,10 @@ class QUIXLEND_OT_download(bpy.types.Operator):
 
         def work():
             asset = client.asset(asset_id)
-            res = client.request_download(api.build_payload(asset, resolution))
+            payload = api.build_payload(asset, resolution)
             dest = download.asset_dir(root, asset)
-            download.fetch_all(download.plan(res, dest), progress)
+            plan = lambda: download.plan(client.request_download(payload), dest)
+            download.fetch_all(plan(), progress, refresh=plan)
             thumb = HOME / "thumbs" / f"{asset_id}.jpg"  # Quixel's own catalog thumbnail
             if thumb.exists():
                 shutil.copyfile(thumb, dest / "_Thumb.jpg")

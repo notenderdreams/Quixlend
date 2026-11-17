@@ -175,5 +175,65 @@ class Retries(unittest.TestCase):
         self.assertEqual(download.reason(ctx.exception), "Network error")
 
 
+class LinkRefresh(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dest = Path(self.tmp.name)
+        self.chunk, download.CHUNK = download.CHUNK, 64_000
+        self.delays, download.RETRY_DELAYS = download.RETRY_DELAYS, (0, 0, 0)
+
+    def tearDown(self):
+        download.CHUNK, download.RETRY_DELAYS = self.chunk, self.delays
+        self.tmp.cleanup()
+
+    def links(self, server, token):
+        return [(f"{url}?t={token}", path, size) for url, path, size in plan(server, self.dest)]
+
+    def test_expired_links_are_refreshed_and_the_download_completes(self):
+        calls = []
+        with TestServer(FILES) as server:
+            server.token = "new"
+
+            def refresh():
+                calls.append(1)
+                return self.links(server, "new")
+            seen = []
+            download.fetch_all(self.links(server, "old"), lambda done, total: seen.append(done), refresh=refresh)
+        for p, data in FILES.items():
+            self.assertEqual((self.dest / p).read_bytes(), data)
+        self.assertEqual(len(calls), 1)  # concurrent 403s share one refresh
+        self.assertEqual(seen[-1], sum(map(len, FILES.values())))
+
+    def test_links_that_stay_denied_fail_after_the_bounded_number_of_refreshes(self):
+        calls = []
+        with TestServer(FILES) as server:
+            server.token = "never"
+
+            def refresh():
+                calls.append(1)
+                return self.links(server, "still-old")
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                download.fetch_all(self.links(server, "old"), refresh=refresh)
+            forbidden = [r for r in server.requests() if r["status"] == 403]
+        self.assertEqual(len(calls), download.MAX_REFRESHES)
+        self.assertEqual(download.reason(ctx.exception), "Link expired or denied")
+        self.assertTrue(forbidden)
+
+    def test_403_is_not_retried_before_the_refresh(self):
+        with TestServer(FILES) as server:
+            server.token = "new"
+            download.fetch_all(self.links(server, "old"), workers=1, refresh=lambda: self.links(server, "new"))
+            first = server.requests()[0]
+            self.assertEqual(first["status"], 403)
+            self.assertNotEqual(server.requests()[1]["status"], 403)
+
+    def test_without_a_refresh_callback_a_403_fails_immediately(self):
+        with TestServer(FILES) as server:
+            server.token = "new"
+            with self.assertRaises(urllib.error.HTTPError):
+                download.fetch_all(self.links(server, "old"), workers=1)
+            self.assertEqual(len(server.requests()), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -93,11 +93,16 @@ def _copy(res, f, on_bytes):
 class _File:
     """One file being downloaded: its partial file, and how many chunks are still outstanding."""
 
-    def __init__(self, uri, path, size):
-        self.uri, self.path, self.size = uri, path, size
+    def __init__(self, uri, path, size, links):
+        self.links, self.path, self.size = links, path, size
+        self.links[path] = uri
         self.part = path.with_name(path.name + ".part")
         self.left = 1
         self.lock = threading.Lock()
+
+    @property
+    def uri(self):
+        return self.links[self.path]  # swapped in place when the links are refreshed
 
     def finish(self):
         """Called when the last chunk lands: verify the size and move the file into place."""
@@ -115,10 +120,15 @@ class _File:
             self.finish()
 
 
-def fetch_all(files, progress=None, workers=8):
+MAX_REFRESHES = 2  # fresh sets of links requested per download before giving up
+
+
+def fetch_all(files, progress=None, workers=8, refresh=None):
     """Download planned files. Big files are split into parallel byte-range chunks, biggest first;
     a server that ignores ranges is streamed whole. progress(done_bytes, total_bytes) is called from
-    worker threads."""
+    worker threads. `refresh()`, if given, returns a new plan for the same files with fresh links; it is
+    called when a link has expired (HTTP 403) and the interrupted work is retried with the new links."""
+    links, renewed = {}, [0, threading.Lock()]  # path -> current uri; [refresh count, lock]
     total, done, lock = sum(size or 0 for _, _, size in files), [0], threading.Lock()
     todo, failure, seq = queue.PriorityQueue(), [], itertools.count()
 
@@ -128,10 +138,24 @@ def fetch_all(files, progress=None, workers=8):
             if progress:
                 progress(done[0], total)
 
+    def renew(seen):
+        """New links after a 403; False once the refresh budget is spent. `seen` = refresh count the caller ran with."""
+        with renewed[1]:
+            if renewed[0] != seen:  # another worker already refreshed
+                return True
+            if not refresh or renewed[0] >= MAX_REFRESHES:
+                return False
+            for uri, path, _ in refresh():
+                if path in links:
+                    links[path] = uri
+            renewed[0] += 1
+            return True
+
     def attempt(job):
-        """Run job(on_bytes), retrying transient failures; bytes of a failed try are taken back."""
-        for delay in (*RETRY_DELAYS, None):
-            counted = [0]
+        """Run job(on_bytes), retrying transient failures and renewing expired links; bytes of a failed try are taken back."""
+        tries = 0
+        while True:
+            seen, counted = renewed[0], [0]
 
             def count(n):
                 counted[0] += n
@@ -142,9 +166,12 @@ def fetch_all(files, progress=None, workers=8):
                 if isinstance(e, urllib.error.HTTPError):
                     e.close()
                 on_bytes(-counted[0])
-                if delay is None or not retryable(e):
+                if isinstance(e, urllib.error.HTTPError) and e.code == 403 and renew(seen):
+                    continue
+                if tries >= len(RETRY_DELAYS) or not retryable(e):
                     raise
-                time.sleep(delay * random.uniform(0.5, 1.0))
+                time.sleep(RETRY_DELAYS[tries] * random.uniform(0.5, 1.0))
+                tries += 1
 
     def put(job, priority):
         todo.put((-priority, next(seq), job))
@@ -207,7 +234,7 @@ def fetch_all(files, progress=None, workers=8):
         if path.exists() and size and path.stat().st_size == size:
             on_bytes(size)
             continue
-        f = _File(uri, path, size)
+        f = _File(uri, path, size, links)
         put((lambda f=f: attempt(lambda on: first(f, on))) if size and size > CHUNK
             else (lambda f=f: attempt(lambda on: stream(f, on))), size or 0)
 
