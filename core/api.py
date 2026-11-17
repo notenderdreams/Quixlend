@@ -160,3 +160,38 @@ def build_payload(asset, resolution=4096, lods=(0,)):
             components.append({"type": "normal", "resolution": res_x,
                                "mimeType": "image/jpeg", "tris": tris[0]})
     return {"asset": asset_id, "components": components, "config": config}
+
+
+def payload_size(asset, payload):
+    """Bytes a `build_payload` result will download, from the asset's file listing."""
+    files = []  # (type, resolution, mimeType, tris, bytes)
+    for c in asset.get("components") or []:
+        for u in c.get("uris") or []:
+            for r in u["resolutions"]:
+                files += [(c["type"], r["resolution"], f["mimeType"], f.get("tris"), f["contentLength"])
+                          for f in r["formats"]]
+    pool = {"components": files}
+    for key in ("maps", "billboards"):
+        pool[key] = [(m["type"], m["resolution"], m["mimeType"], None, m["contentLength"])
+                     for m in asset.get(key) or []]
+
+    def pick(want, files):
+        t, res, mime, tris = want["type"], want["resolution"], want["mimeType"], want.get("tris")
+        mimes = ("image/jpeg", "image/x-exr") if mime == "jpeg+exr" else (mime,)
+        return sum(f[4] for f in files if f[:3] in {(t, res, m) for m in mimes} and tris in (None, f[3]))
+
+    comps = pool["maps"] if asset.get("version") == 2 else pool["components"]
+    total = sum(pick(c, comps) for c in payload.get("components") or [])
+    if isinstance(payload.get("billboards"), list):
+        total += sum(pick(c, pool["billboards"]) for c in payload["billboards"])
+    meshes = payload.get("meshes")
+    if meshes:  # v2 plants/3D: models are listed per lod
+        total += sum(m["contentLength"] for m in asset.get("models") or []
+                     if m["type"] == "lod" and any(m["lod"] == w["lod"] and m["mimeType"] == w["mimeType"]
+                                                   for w in meshes))
+    elif payload.get("config", {}).get("lods"):
+        for tris in payload["config"]["lods"]:
+            total += sum(u["contentLength"] for m in asset.get("meshes") or []
+                         if m["type"] == "lod" and m["tris"] == tris
+                         for u in m["uris"] if u["mimeType"] == FBX)
+    return total

@@ -37,6 +37,32 @@ class state:
     local = set()   # ids already built into the library
     progress = {}   # id -> 0..1 while downloading
     errors = {}     # id -> message
+    sizes = {}      # (id, resolution) -> download bytes
+    assets = {}     # id -> extended asset (None if the fetch failed), for size estimates
+
+
+_pool = ThreadPoolExecutor(4)
+
+
+def download_size(asset_id, fetch=True):
+    """Bytes the Download button would fetch at the chosen resolution; None until the asset listing arrives."""
+    if fetch and asset_id not in state.assets:
+        state.assets[asset_id] = None
+
+        def fetch_asset():
+            try:
+                state.assets[asset_id] = client.asset(asset_id)
+            except Exception:
+                return
+            jobs.dirty.set()
+        _pool.submit(fetch_asset)
+    asset = state.assets.get(asset_id)
+    if not asset:
+        return None
+    key = (asset_id, int(prefs().resolution))
+    if key not in state.sizes:
+        state.sizes[key] = api.payload_size(asset, api.build_payload(asset, key[1]))
+    return state.sizes[key]
 
 
 def prefs():

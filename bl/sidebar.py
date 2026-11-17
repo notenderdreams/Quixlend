@@ -26,12 +26,27 @@ def scale():
     return bpy.context.preferences.system.ui_scale
 
 
+def _size_text(n):
+    return f"{n / 1e9:.1f} GB" if n >= 1e9 else f"{n / 1e6:.0f} MB"
+
+
+def _min_card():
+    """Narrowest card that still shows the widest download size next to the icon."""
+    s = scale()
+    widest = max((_size_text(n) for h in ui.state.hits if h["id"] not in ui.state.local
+                  and (n := ui.download_size(h["id"], fetch=False))), key=len, default="")
+    if not widest:
+        return 0
+    blf.size(0, 10 * s)
+    return 3 * 4 * s + 46 * s + 8 * s + 7 * s + 4 * s + blf.dimensions(0, widest)[0]  # pads, res button, margins, icon, gap, text
+
+
 def metrics(region):
     """Grid geometry for a sidebar region; shared by the panel (to reserve space), drawing and hit-testing."""
     s = scale()
     left, gap, label = 10 * s, 8 * s, 30 * s
     width = max(40 * s, region.width - left - 30 * s)  # tab strip and scrollbar
-    cols = max(1, int((width + gap) // (100 * s + gap)))
+    cols = max(1, int((width + gap) // (max(100 * s, _min_card()) + gap)))
     card = (width - (cols - 1) * gap) / cols
     rows = math.ceil(len(ui.state.hits) / cols)
     return {"left": left, "gap": gap, "label": label, "cols": cols, "card": card,
@@ -144,6 +159,33 @@ def _main_label(asset_id, hit):
     return "Download"
 
 
+def _draw_download(rect, size, fill, text, hovered):
+    """Download icon plus the download size; the size is dropped when the button is too narrow."""
+    x, y, w, h = rect
+    t, a = scale(), 3.5 * scale()
+    r = 3 * t
+    _rrect(x, y, w, h, r, _lift(fill, 0.12) if hovered else fill)
+    label = _size_text(size) if size else ""
+    font = 10 * t
+    blf.size(0, font)
+    tw = blf.dimensions(0, label)[0]
+    gap = 4 * t
+    full = 2 * a + gap + tw
+    if not label or full > w - 8 * t:
+        label, full = "", 2 * a
+    left = x + (w - full) / 2
+    cx, cy = left + a, y + h / 2 + t
+    tris = ((cx - a, cy), (cx + a, cy), (cx, cy - a),  # arrow head
+            (cx - t / 2, cy + a), (cx + t / 2, cy + a), (cx - t / 2, cy), (cx + t / 2, cy + a), (cx + t / 2, cy), (cx - t / 2, cy),  # stem
+            (cx - a, cy - a - t), (cx + a, cy - a - t), (cx - a, cy - a - 2 * t),  # tray
+            (cx + a, cy - a - t), (cx + a, cy - a - 2 * t), (cx - a, cy - a - 2 * t))
+    shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+    shader.uniform_float("color", text)
+    batch_for_shader(shader, "TRIS", {"pos": tris}).draw(shader)
+    if label:
+        _text(label, left + 2 * a + gap, y + (h - font) / 2 + 1.5 * t, font, text, tw + 1)
+
+
 def _draw_button(rect, label, fill, text, hovered, colors, progress=None, dropdown=False):
     x, y, w, h = rect
     r = 3 * scale()
@@ -153,17 +195,6 @@ def _draw_button(rect, label, fill, text, hovered, colors, progress=None, dropdo
     size = 10 * scale()
     blf.size(0, size)
     tw = blf.dimensions(0, label)[0]
-    if label == "Download" and tw > w - 8 * scale():  # too narrow for the text: show a download icon
-        cx, cy, a = x + w / 2, y + h / 2 + scale(), 3.5 * scale()
-        t = scale()
-        tris = ((cx - a, cy), (cx + a, cy), (cx, cy - a),  # arrow head
-                (cx - t / 2, cy + a), (cx + t / 2, cy + a), (cx - t / 2, cy), (cx + t / 2, cy + a), (cx + t / 2, cy), (cx - t / 2, cy),  # stem
-                (cx - a, cy - a - t), (cx + a, cy - a - t), (cx - a, cy - a - 2 * t),  # tray
-                (cx + a, cy - a - t), (cx + a, cy - a - 2 * t), (cx - a, cy - a - 2 * t))
-        shader = gpu.shader.from_builtin("UNIFORM_COLOR")
-        shader.uniform_float("color", text)
-        batch_for_shader(shader, "TRIS", {"pos": tris}).draw(shader)
-        return
     _text(label, x + max(4 * scale(), (w - tw) / 2 - (5 * scale() if dropdown else 0)), y + (h - size) / 2 + 1.5 * scale(), size, text, w - 8 * scale())
 
 
@@ -195,9 +226,13 @@ def draw_grid():
         main, res = buttons(m, hit, x, y)
         local, busy = asset_id in ui.state.local, asset_id in ui.state.progress
         unavailable = ui.state.owned is not None and asset_id not in ui.state.owned
-        _draw_button(main, _main_label(asset_id, hit), colors["button"], colors["button_text"],
-                     zone == "main" and not busy and not unavailable, colors,
-                     ui.state.progress.get(asset_id))
+        label = _main_label(asset_id, hit)
+        hovered = zone == "main" and not busy and not unavailable
+        if label == "Download":
+            _draw_download(main, ui.download_size(asset_id), colors["button"], colors["button_text"], hovered)
+        else:
+            _draw_button(main, label, colors["button"], colors["button_text"], hovered, colors,
+                         ui.state.progress.get(asset_id))
         if res:
             _draw_button(res, ui.res_label(), colors["button"], colors["button_text"], zone == "res", colors, dropdown=True)
             ax, ay, a = res[0] + res[2] - 9 * s, res[1] + res[3] / 2, 2.5 * s  # dropdown arrow
