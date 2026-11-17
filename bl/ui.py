@@ -542,7 +542,7 @@ class QuixlendPreferences(bpy.types.AddonPreferences):
                             default=str(Path.home() / "Documents" / "Megascans Library"),
                             description="Folder downloads are stored in; registered as an asset library")
     resolution: EnumProperty(name="Texture Resolution", default="4096",
-                             items=[("2048", "2K", ""), ("4096", "4K", ""), ("8192", "8K", "")])
+                             items=[("1024", "1K", ""), ("2048", "2K", ""), ("4096", "4K", ""), ("8192", "8K", "")])
 
     def draw(self, context):
         self.layout.prop(self, "library")
