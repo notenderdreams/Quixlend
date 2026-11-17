@@ -1,5 +1,6 @@
 """Fetch the files of a /v1/downloads response into an asset folder. No bpy."""
 import itertools
+import json
 import os
 import queue
 import random
@@ -97,8 +98,42 @@ class _File:
         self.links, self.path, self.size = links, path, size
         self.links[path] = uri
         self.part = path.with_name(path.name + ".part")
-        self.left = 1
+        self.sidecar = self.part.with_name(self.part.name + ".json")  # which chunks are complete
+        self.left, self.done = 1, set()
         self.lock = threading.Lock()
+
+    def chunks(self):
+        return -(-self.size // CHUNK)
+
+    def span(self, i):
+        """(start, end) inclusive byte range of chunk i."""
+        return i * CHUNK, min((i + 1) * CHUNK, self.size) - 1
+
+    def save(self):
+        tmp = self.sidecar.with_name(self.sidecar.name + ".tmp")
+        tmp.write_text(json.dumps({"size": self.size, "chunk": CHUNK, "done": sorted(self.done)}))
+        tmp.replace(self.sidecar)
+
+    def mark(self, i):
+        """Record chunk i as completely written, so an interrupted download can pick up after it."""
+        with self.lock:
+            self.done.add(i)
+            self.save()
+
+    def resume(self):
+        """Chunks already on disk from an earlier attempt, or None (and a clean slate) if that state is unusable."""
+        try:
+            meta = json.loads(self.sidecar.read_text())
+            done = set(meta["done"])
+            if (meta["size"] == self.size and meta["chunk"] == CHUNK and self.part.stat().st_size == self.size
+                    and all(isinstance(i, int) and 0 <= i < self.chunks() for i in done)):
+                self.done = done
+                return done
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        self.part.unlink(missing_ok=True)
+        self.sidecar.unlink(missing_ok=True)
+        return None
 
     @property
     def uri(self):
@@ -109,8 +144,10 @@ class _File:
         got = self.part.stat().st_size
         if self.size and got != self.size:
             self.part.unlink()
+            self.sidecar.unlink(missing_ok=True)
             raise DownloadError(f"{self.path.name}: got {got} bytes, expected {self.size}")
         self.part.replace(self.path)
+        self.sidecar.unlink(missing_ok=True)
 
     def chunk_done(self):
         with self.lock:
@@ -192,6 +229,7 @@ def fetch_all(files, progress=None, workers=8, refresh=None):
                 got = _copy(res, out, on_bytes)
         if got != end - start + 1:
             raise ShortRead(f"{f.path.name}: got {got} bytes of range {start}-{end}")
+        f.mark(start // CHUNK)
         f.chunk_done()
 
     def first(f, on_bytes):
@@ -207,9 +245,12 @@ def fetch_all(files, progress=None, workers=8, refresh=None):
                 return
             with open(f.part, "wb") as out:
                 out.truncate(f.size)
+                f.done = set()
+                f.save()
                 got = _copy(res, out, on_bytes)
         if got != end + 1:
             raise ShortRead(f"{f.path.name}: got {got} bytes of range 0-{end}")
+        f.mark(0)
         starts = range(CHUNK, f.size, CHUNK)
         f.left = 1 + len(starts)
         for start in starts:
@@ -235,8 +276,19 @@ def fetch_all(files, progress=None, workers=8, refresh=None):
             on_bytes(size)
             continue
         f = _File(uri, path, size, links)
-        put((lambda f=f: attempt(lambda on: first(f, on))) if size and size > CHUNK
-            else (lambda f=f: attempt(lambda on: stream(f, on))), size or 0)
+        if not size or size <= CHUNK:
+            put(lambda f=f: attempt(lambda on: stream(f, on)), size or 0)
+        elif (have := f.resume()) is None:
+            put(lambda f=f: attempt(lambda on: first(f, on)), size)
+        else:  # an earlier attempt left chunks on disk: fetch only the missing ones
+            for i in have:
+                on_bytes(f.span(i)[1] - f.span(i)[0] + 1)
+            missing = [i for i in range(f.chunks()) if i not in have]
+            f.left = len(missing)
+            if not missing:
+                put(f.finish, size)
+            for i in missing:
+                put(lambda f=f, i=i: attempt(lambda on: chunk(f, *f.span(i), on)), size)
 
     threads = [threading.Thread(target=worker, daemon=True) for _ in range(workers)]
     for t in threads:

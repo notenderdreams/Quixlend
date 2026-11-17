@@ -235,5 +235,84 @@ class LinkRefresh(unittest.TestCase):
             self.assertEqual(len(server.requests()), 1)
 
 
+class Resume(unittest.TestCase):
+    """An interrupted download continues from the chunks already on disk."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dest = Path(self.tmp.name)
+        self.chunk, download.CHUNK = download.CHUNK, 64_000
+        self.delays, download.RETRY_DELAYS = download.RETRY_DELAYS, ()
+        self.big = self.dest / "a/big.bin"
+        self.sidecar = self.dest / "a/big.bin.part.json"
+
+    def tearDown(self):
+        download.CHUNK, download.RETRY_DELAYS = self.chunk, self.delays
+        self.tmp.cleanup()
+
+    def interrupt(self, server, after=3):
+        """Download with the server dying for good after `after` requests; one worker keeps the order fixed."""
+        server.fail = {n: 500 for n in range(after + 1, 100)}
+        with self.assertRaises(Exception):
+            download.fetch_all(plan(server, self.dest), workers=1)
+        server.fail, server.log[:] = {}, []
+
+    def finish(self, server):
+        seen = []
+        download.fetch_all(plan(server, self.dest), lambda done, total: seen.append(done), workers=1)
+        return seen
+
+    def test_second_run_fetches_only_the_missing_chunks(self):
+        with TestServer(FILES) as server:
+            self.interrupt(server)
+            self.assertTrue(self.sidecar.exists())
+            seen = self.finish(server)
+            ranges = [r["range"] for r in server.requests("a/big.bin")]
+        self.assertEqual(ranges, ["bytes=192000-255999", "bytes=256000-299999"])  # chunks 3 and 4
+        self.assertEqual(self.big.read_bytes(), FILES["a/big.bin"])
+        self.assertEqual(seen[-1], sum(map(len, FILES.values())))
+        self.assertEqual(seen, sorted(seen))
+        self.assertFalse(self.sidecar.exists())
+
+    def test_a_corrupt_record_restarts_cleanly(self):
+        with TestServer(FILES) as server:
+            self.interrupt(server)
+            self.sidecar.write_text("not json")
+            self.finish(server)
+            self.assertEqual(len(server.requests("a/big.bin")), 5)
+        self.assertEqual(self.big.read_bytes(), FILES["a/big.bin"])
+
+    def test_a_record_without_its_partial_file_restarts_cleanly(self):
+        with TestServer(FILES) as server:
+            self.interrupt(server)
+            (self.dest / "a/big.bin.part").unlink()
+            self.finish(server)
+            self.assertEqual(len(server.requests("a/big.bin")), 5)
+        self.assertEqual(self.big.read_bytes(), FILES["a/big.bin"])
+
+    def test_a_record_for_a_different_chunk_size_restarts_cleanly(self):
+        with TestServer(FILES) as server:
+            self.interrupt(server)
+            download.CHUNK = 100_000
+            self.finish(server)
+            self.assertEqual(len(server.requests("a/big.bin")), 3)
+        self.assertEqual(self.big.read_bytes(), FILES["a/big.bin"])
+
+    def test_wrong_final_size_after_resume_leaves_no_finished_file(self):
+        with TestServer(FILES) as server:
+            self.interrupt(server)
+            bad = [(url, path, size + 1) for url, path, size in plan(server, self.dest)]
+            with self.assertRaises(download.DownloadError):
+                download.fetch_all(bad, workers=1)
+        self.assertFalse(self.big.exists())
+
+    def test_complete_files_cost_no_requests_on_a_later_run(self):
+        with TestServer(FILES) as server:
+            download.fetch_all(plan(server, self.dest)[:1], workers=1)  # only the big file
+            server.log[:] = []
+            download.fetch_all(plan(server, self.dest), workers=1)
+            self.assertEqual([r["path"] for r in server.requests()], ["a/small.bin"])
+
+
 if __name__ == "__main__":
     unittest.main()
