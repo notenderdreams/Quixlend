@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 import bpy
 import bpy.utils.previews
-from bpy.props import BoolProperty, EnumProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, FloatProperty, StringProperty
 
 from ..core import api, auth, download, http
 from ..core.scheduler import Scheduler
@@ -147,6 +147,8 @@ if TYPE_CHECKING:
         library: str
         resolution: str
         fetch_sizes: bool
+        hover_preview: bool
+        hover_preview_delay: float
 
 
 def prefs() -> "Prefs":
@@ -829,6 +831,19 @@ class QuixlendPreferences(bpy.types.AddonPreferences):
         default="4096",
         items=[("1024", "1K", ""), ("2048", "2K", ""), ("4096", "4K", ""), ("8192", "8K", "")],
     )
+    hover_preview: BoolProperty(  # pyright: ignore[reportInvalidTypeForm]
+        name="Hover Preview",
+        default=True,
+        description="Show a large preview in the viewport when you rest the pointer on a card's image",
+    )
+    hover_preview_delay: FloatProperty(  # pyright: ignore[reportInvalidTypeForm]
+        name="Preview Delay",
+        default=0.5,
+        min=0.1,
+        max=2.0,
+        unit="TIME",
+        description="How long to rest on a card before its preview appears",
+    )
     fetch_sizes: BoolProperty(  # pyright: ignore[reportInvalidTypeForm]
         name="Fetch Download Sizes",
         default=False,
@@ -841,6 +856,10 @@ class QuixlendPreferences(bpy.types.AddonPreferences):
         layout.prop(self, "library")
         layout.prop(self, "resolution")
         layout.prop(self, "fetch_sizes")
+        layout.prop(self, "hover_preview")
+        row = layout.row()
+        row.enabled = self.hover_preview
+        row.prop(self, "hover_preview_delay")
 
 
 class QUIXLEND_PT_settings(bpy.types.Panel):
@@ -859,6 +878,10 @@ class QUIXLEND_PT_settings(bpy.types.Panel):
         layout.prop(prefs(), "library")
         layout.prop(prefs(), "resolution")
         layout.prop(prefs(), "fetch_sizes")
+        layout.prop(prefs(), "hover_preview")
+        row = layout.row()
+        row.enabled = prefs().hover_preview
+        row.prop(prefs(), "hover_preview_delay")
         layout.separator()
         layout.label(text="Downloaded", icon="DISK_DRIVE")
         col = layout.column(align=True)

@@ -25,7 +25,6 @@ HEADER_UNITS = 5.5  # panel header + search/filter/status rows, in widget units
 drag: dict[str, Any] | None = None  # {"hit", "x", "y"} in window coordinates while a card is being dragged
 hover: tuple[int, str, str | None] | None = None  # (region pointer, asset id, zone)
 hover_since = 0.0  # when `hover` last changed
-PREVIEW_DELAY = 0.5  # seconds on a card's image before the big preview shows
 PREVIEW_KEEP = 8  # large previews kept loaded
 previews: list[str] = []  # asset ids whose large image is loaded, oldest first
 requested: set[str] = set()  # large previews being fetched
@@ -575,7 +574,9 @@ def dwell(area, key):
 
 def draw_preview():
     """Large preview of the hovered card, in the viewport beside the sidebar."""
-    if drag or not hover or hover[2] is not None or time.time() - hover_since < PREVIEW_DELAY * 0.9:
+    if not ui.prefs().hover_preview or drag or not hover or hover[2] is not None:
+        return
+    if time.time() - hover_since < ui.prefs().hover_preview_delay * 0.9:
         return
     area, region = bpy.context.area, bpy.context.region
     sidebar = next((r for r in area.regions if r.type == "UI" and r.as_pointer() == hover[0]), None)
@@ -634,9 +635,10 @@ class QUIXLEND_OT_hover(bpy.types.Operator):
         if current != hover:
             hover, hover_since = current, time.time()
             context.area.tag_redraw()
-            if current and current[2] is None:
+            if current and current[2] is None and ui.prefs().hover_preview:
                 bpy.app.timers.register(
-                    lambda area=context.area, key=current: dwell(area, key), first_interval=PREVIEW_DELAY
+                    lambda area=context.area, key=current: dwell(area, key),
+                    first_interval=ui.prefs().hover_preview_delay,
                 )
         return {"PASS_THROUGH"}
 
