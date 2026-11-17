@@ -313,7 +313,7 @@ class QUIXLEND_OT_card(bpy.types.Operator):
                 context.window_manager.popup_menu(ui.draw_res_menu, title="Texture Resolution")
             elif self.zone == "main":
                 if asset_id in st.local:
-                    self.import_center(context)
+                    self.import_at_cursor(context)
                 elif asset_id not in st.progress and (st.owned is None or asset_id in st.owned):
                     st.errors.pop(asset_id, None)
                     bpy.ops.quixlend.download(asset_id=asset_id)
@@ -343,13 +343,11 @@ class QUIXLEND_OT_card(bpy.types.Operator):
                 or context.scene.cursor.location
         return location, target
 
-    def import_center(self, context):
-        """Import at the middle of the 3D viewport (what is under it, else the ground)."""
+    def import_at_cursor(self, context):
+        """Import at the 3D cursor (materials go on the selected objects)."""
         region = next(r for r in self.area.regions if r.type == "WINDOW")
-        found = self.locate(context, region.x + region.width / 2, region.y + region.height / 2)
-        location, target = found or (None, None)
         with context.temp_override(area=self.area, region=region):
-            message = ui.place(context, self.hit["id"], location, target, pick=random.choice)
+            message = ui.place(context, self.hit["id"], pick=random.choice)
         if message:
             self.report({"WARNING"}, message)
 
