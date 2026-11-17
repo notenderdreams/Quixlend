@@ -415,6 +415,13 @@ def _search_update(self, context):
     start_search()
 
 
+def _asset_browser_header(self, context):
+    params = context.space_data.params
+    ref = getattr(params, "asset_library_reference", None) or getattr(params, "asset_library_ref", "")
+    if ref == "Megascans":
+        self.layout.label(text="Megascans", icon_value=_icons["quixel"].icon_id)
+
+
 def register():
     global _icons
     _icons = bpy.utils.previews.new()
@@ -426,12 +433,14 @@ def register():
     wm.quixlend_type = EnumProperty(name="Type", items=TYPES, update=_search_update)
     wm.quixlend_code = StringProperty(name="Authorization Code", options={"SKIP_SAVE"})
     bpy.app.handlers.load_post.append(_file_loaded)
+    bpy.types.ASSETBROWSER_MT_editor_menus.append(_asset_browser_header)
     bpy.app.timers.register(_startup, first_interval=0.5, persistent=True)
 
 
 def unregister():
     global _icons
     bpy.app.handlers.load_post.remove(_file_loaded)
+    bpy.types.ASSETBROWSER_MT_editor_menus.remove(_asset_browser_header)
     wm = bpy.types.WindowManager
     del wm.quixlend_query, wm.quixlend_type, wm.quixlend_code
     for cls in reversed(CLASSES):
