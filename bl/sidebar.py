@@ -17,13 +17,18 @@ from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
 from mathutils.geometry import intersect_line_plane
 
-from . import ui
+from . import jobs, ui
 
 CATEGORY = "Quixlend"
 HEADER_UNITS = 5.5  # panel header + search/filter/status rows, in widget units
 
 drag: dict[str, Any] | None = None  # {"hit", "x", "y"} in window coordinates while a card is being dragged
 hover: tuple[int, str, str | None] | None = None  # (region pointer, asset id, zone)
+hover_since = 0.0  # when `hover` last changed
+PREVIEW_DELAY = 0.5  # seconds on a card's image before the big preview shows
+PREVIEW_KEEP = 8  # large previews kept loaded
+previews: list[str] = []  # asset ids whose large image is loaded, oldest first
+requested: set[str] = set()  # large previews being fetched
 
 
 def scale():
@@ -532,6 +537,71 @@ def draw_drag_3d():
     gpu.state.blend_set("NONE")
 
 
+def _preview_image(asset_id):
+    """The large preview as an image datablock, or None while it has not been fetched."""
+    if asset_id not in previews:
+        return None
+    image = bpy.data.images.get(
+        f".quixlend_big_{asset_id}"
+    )  # undo/redo can drop it; the file is still on disk
+    if image is None:
+        previews.remove(asset_id)
+    return image
+
+
+def dwell(area, key):
+    """The pointer rested on a card's image: fetch its large preview and redraw so it shows."""
+    if hover is None or hover != key or key[2] is not None:
+        return
+    asset_id = key[1]
+    hit = next((h for h in ui.state.hits if h["id"] == asset_id), None)
+    if hit and asset_id not in requested and not _preview_image(asset_id):
+        requested.add(asset_id)
+
+        def done(path, error):
+            requested.discard(asset_id)
+            if error:
+                return
+            image = bpy.data.images.load(str(path))
+            image.name = f".quixlend_big_{asset_id}"
+            previews.append(asset_id)
+            while len(previews) > PREVIEW_KEEP:  # keep memory bounded
+                if old := bpy.data.images.get(f".quixlend_big_{previews.pop(0)}"):
+                    bpy.data.images.remove(old)
+
+        jobs.run(lambda: ui.big_preview(hit), done)
+    area.tag_redraw()
+
+
+def draw_preview():
+    """Large preview of the hovered card, in the viewport beside the sidebar."""
+    if drag or not hover or hover[2] is not None or time.time() - hover_since < PREVIEW_DELAY * 0.9:
+        return
+    area, region = bpy.context.area, bpy.context.region
+    sidebar = next((r for r in area.regions if r.type == "UI" and r.as_pointer() == hover[0]), None)
+    hit = next((h for h in ui.state.hits if h["id"] == hover[1]), None)
+    if not sidebar or not hit or not (image := _preview_image(hit["id"]) or ui.thumb_image(hit)):
+        return
+    s = scale()
+    m, items = cells(sidebar)
+    card_y = next((y for h, _, y in items if h["id"] == hit["id"]), 0)
+    right = sidebar.x - region.x - 12 * s  # the viewport's own region may sit under the sidebar
+    side = min(480 * s, region.height - 56 * s, right - 12 * s)
+    if side < 96 * s:
+        return  # no room
+    w, h = cast(Any, image).size
+    aspect = w / h if h else 1
+    pw, ph = (side, side / aspect) if aspect >= 1 else (side * aspect, side)
+    x = right - pw
+    mid = card_y + m["card"] / 2 + sidebar.y - region.y
+    y = min(max(mid - ph / 2, 28 * s), region.height - ph - 12 * s)
+    gpu.state.blend_set("ALPHA")
+    _rrect(x - 6 * s, y - 24 * s, pw + 12 * s, ph + 30 * s, 6 * s, (0, 0, 0, 0.72))
+    _image(image, x, y, pw, ph)
+    _text(hit["name"], x, y - 17 * s, 12 * s, (1, 1, 1, 1), pw)
+    gpu.state.blend_set("NONE")
+
+
 def draw_drag():
     """Thumbnail following the mouse (materials, or a mesh not over the viewport); sidebar and viewport."""
     if not drag or not (image := ui.thumb_image(drag["hit"])):
@@ -553,7 +623,7 @@ class QUIXLEND_OT_hover(bpy.types.Operator):
     bl_options = {"INTERNAL"}
 
     def invoke(self, context: bpy.types.Context, event: bpy.types.Event) -> ui.Result:
-        global hover
+        global hover, hover_since
         region = context.region
         hit, zone = (
             zone_at(region, event.mouse_region_x, event.mouse_region_y)
@@ -562,8 +632,12 @@ class QUIXLEND_OT_hover(bpy.types.Operator):
         )
         current = (region.as_pointer(), hit["id"], zone) if hit else None
         if current != hover:
-            hover = current
+            hover, hover_since = current, time.time()
             context.area.tag_redraw()
+            if current and current[2] is None:
+                bpy.app.timers.register(
+                    lambda area=context.area, key=current: dwell(area, key), first_interval=PREVIEW_DELAY
+                )
         return {"PASS_THROUGH"}
 
 
@@ -795,6 +869,7 @@ def register():
             (space.draw_handler_add(draw_grid, (), "UI", "POST_PIXEL"), "UI"),
             (space.draw_handler_add(draw_drag, (), "UI", "POST_PIXEL"), "UI"),
             (space.draw_handler_add(draw_drag, (), "WINDOW", "POST_PIXEL"), "WINDOW"),
+            (space.draw_handler_add(draw_preview, (), "WINDOW", "POST_PIXEL"), "WINDOW"),
             (space.draw_handler_add(draw_drag_3d, (), "WINDOW", "POST_VIEW"), "WINDOW"),
         ]
     )
