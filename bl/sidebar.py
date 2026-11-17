@@ -121,8 +121,7 @@ def draw_grid():
         if y > region.height or y + m["card"] < -m["label"]:
             continue
         asset_id, card = hit["id"], m["card"]
-        selected = (drag and drag["hit"] is hit) or hover == (region.as_pointer(), asset_id)
-        _rect(x, y - m["label"], card, card + m["label"], colors["hover"] if selected else colors["card"])
+        _rect(x, y - m["label"], card, card + m["label"], colors["card"])
         if image := ui.thumb_image(hit):
             width, height = image.size
             fit = (card - 4 * s) / max(width, height, 1)
@@ -131,11 +130,15 @@ def draw_grid():
         if asset_id in ui.state.progress:
             _rect(x, y, card, 3 * s, colors["card"])
             _rect(x, y, card * ui.state.progress[asset_id], 3 * s, colors["accent"])
-        text_color = colors["selected_text"] if selected else colors["text"]
-        _text(hit["name"], x + 6 * s, y - 15 * s, 11 * s, text_color, card - 12 * s)
+        lift = (lambda c: (*(a + (1 - a) * 0.35 for a in c[:3]), c[3])) if hover == (region.as_pointer(), asset_id) else (lambda c: c)
+        _text(hit["name"], x + 6 * s, y - 15 * s, 11 * s, lift(colors["text"]), card - 12 * s)
         status, color = _status(asset_id, colors)
-        _text(status, x + 6 * s, y - 30 * s, 10 * s, text_color if selected else color, card - 12 * s)
+        _text(status, x + 6 * s, y - 30 * s, 10 * s, lift(color), card - 12 * s)
     gpu.state.blend_set("NONE")
+    st = ui.state
+    if items and not st.loading and st.page + 1 < st.pages and items[-1][2] + m["card"] >= 0:
+        st.loading = True  # last row reached the viewport: fetch the next batch
+        bpy.app.timers.register(lambda: ui.start_search(st.page + 1, append=True) and None, first_interval=0)
 
 
 batches = {}  # (asset id, object name) -> GPU line batch of the mesh edges in object space

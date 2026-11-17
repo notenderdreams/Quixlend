@@ -32,6 +32,7 @@ class state:
     seq = 0         # id of the latest search
     page = pages = 0
     status = ""
+    loading = False  # a search/page fetch is in flight
     owned = None    # set of asset ids, None until fetched
     local = set()   # ids already built into the library
     progress = {}   # id -> 0..1 while downloading
@@ -127,6 +128,7 @@ def start_search(page=0, append=False):
     seq = state.seq
     query, asset_type = wm.quixlend_query, wm.quixlend_type
     state.status = "Searching…"
+    state.loading = True
 
     def work():
         res = api.search(query, page, PER_PAGE, None if asset_type == "ALL" else asset_type)
@@ -137,6 +139,7 @@ def start_search(page=0, append=False):
     def done(result, error):
         if seq != state.seq:
             return
+        state.loading = False
         if error:
             state.status = f"Search failed: {error}"[:120]
             return
@@ -387,9 +390,7 @@ class QUIXLEND_PT_browser(bpy.types.Panel):
             box.label(text="Try another search or asset type." if state.status == "No results"
                       else "Search by name or choose an asset type.")
         if state.page + 1 < state.pages:
-            row = layout.row()
-            row.scale_y = 1.2
-            row.operator("quixlend.search", text="Show More Assets", icon="ADD").more = True
+            layout.label(text="Fetching more assets…", icon="SORTTIME")
         if state.hits:
             col = layout.column(align=True)
             col.enabled = False
