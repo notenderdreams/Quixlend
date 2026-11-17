@@ -112,6 +112,166 @@ def build_material(name, maps, displace):
     return mat
 
 
+def build_group_material(name, maps):
+    """Object material: the texture work lives in a node group named like the material, exposing the tweaks
+    (tint, hue, saturation, brightness, contrast, roughness, normal strength); the BSDF stays outside."""
+    mat = bpy.data.materials.new(name)
+    nodes, links = mat.node_tree.nodes, mat.node_tree.links
+    bsdf = next(n for n in nodes if n.bl_idname == "ShaderNodeBsdfPrincipled")
+    out = next(n for n in nodes if n.bl_idname == "ShaderNodeOutputMaterial")
+    coord, mapping = nodes.new("ShaderNodeTexCoord"), nodes.new("ShaderNodeMapping")
+    coord.location, mapping.location = (-830, 0), (-610, 0)
+    bsdf.location, out.location = (0, 0), (300, 0)
+    links.new(coord.outputs["UV"], mapping.inputs["Vector"])
+
+    ng = bpy.data.node_groups.new(name, "ShaderNodeTree")
+    gl, gi, go = ng.links, ng.nodes.new("NodeGroupInput"), ng.nodes.new("NodeGroupOutput")
+    gi.location, go.location = (-1400, 0), (1300, 0)
+    face = ng.interface
+
+    def add(label, kind, direction="INPUT", panel=None, default=None, lo=None, hi=None):
+        sock = face.new_socket(label, in_out=direction, socket_type=kind, parent=panel)
+        if default is not None:
+            sock.default_value = default
+        if lo is not None:
+            sock.min_value, sock.max_value, sock.subtype = lo, hi, "FACTOR"  # a slider
+        return sock
+
+    def node(idname, x, y, **props):
+        n = ng.nodes.new(idname)
+        n.location = (x, y)
+        for key, value in props.items():
+            setattr(n, key, value)
+        return n
+
+    def mix(x, y, a, b, fac):
+        n = node("ShaderNodeMix", x, y, data_type="RGBA", blend_type="MULTIPLY")
+        if isinstance(fac, float):
+            n.inputs["Factor"].default_value = fac
+        else:
+            gl.new(fac, n.inputs["Factor"])
+        gl.new(a, n.inputs["A"])
+        gl.new(b, n.inputs["B"])
+        return n.outputs["Result"]
+
+    add("Vector", "NodeSocketVector").hide_value = True
+    color_panel = face.new_panel("Color") if "albedo" in maps else None
+    surface_panel = face.new_panel("Surface") if "roughness" in maps else None
+    normal_panel = face.new_panel("Normal") if "normal" in maps else None
+    row = [0]
+
+    def tex(role, color=False):
+        if role not in maps:
+            return None
+        n = node("ShaderNodeTexImage", -1000, 300 - 280 * row[0], label=role)
+        n.image = bpy.data.images.load(str(maps[role]))
+        n.image.colorspace_settings.name = "sRGB" if color else "Non-Color"
+        row[0] += 1
+        gl.new(gi.outputs["Vector"], n.inputs["Vector"])
+        return n
+
+    def emit(label, kind, socket):
+        add(label, kind, "OUTPUT")
+        gl.new(socket, go.inputs[label])
+
+    albedo, ao = tex("albedo", color=True), tex("ao")
+    if albedo:
+        add("Tint", "NodeSocketColor", panel=color_panel, default=(1, 1, 1, 1))
+        add("Tint Strength", "NodeSocketFloat", panel=color_panel, default=1.0, lo=0.0, hi=1.0)
+        add("Hue Shift", "NodeSocketFloat", panel=color_panel, default=0.0, lo=-0.5, hi=0.5)
+        add("Saturation", "NodeSocketFloat", panel=color_panel, default=1.0, lo=0.0, hi=2.0)
+        add("Brightness", "NodeSocketFloat", panel=color_panel, default=0.0, lo=-1.0, hi=1.0)
+        add("Contrast", "NodeSocketFloat", panel=color_panel, default=0.0, lo=-1.0, hi=1.0)
+        color = albedo.outputs["Color"]
+        if ao:
+            color = mix(-600, 300, color, ao.outputs["Color"], 1.0)
+        color = mix(-400, 300, color, gi.outputs["Tint"], gi.outputs["Tint Strength"])
+        hue = node("ShaderNodeMath", -400, 100, operation="ADD")
+        gl.new(gi.outputs["Hue Shift"], hue.inputs[0])
+        hue.inputs[1].default_value = 0.5  # 0.5 is "no shift" for the Hue/Saturation node
+        hsv = node("ShaderNodeHueSaturation", -200, 300)
+        gl.new(hue.outputs["Value"], hsv.inputs["Hue"])
+        gl.new(gi.outputs["Saturation"], hsv.inputs["Saturation"])
+        gl.new(color, hsv.inputs["Color"])
+        # Brightness: exposure-style multiply (1 + Brightness). Contrast: scale around linear mid-gray.
+        # Blender's own Bright/Contrast node subtracts in linear space and crushes albedo to black.
+        gain = node("ShaderNodeMath", 0, 500, operation="ADD")
+        gl.new(gi.outputs["Brightness"], gain.inputs[0])
+        gain.inputs[1].default_value = 1.0
+        lit = mix(0, 300, hsv.outputs["Color"], gain.outputs["Value"], 1.0)
+        steep = node("ShaderNodeMath", 200, 500, operation="ADD")
+        gl.new(gi.outputs["Contrast"], steep.inputs[0])
+        steep.inputs[1].default_value = 1.0
+        below = node("ShaderNodeVectorMath", 200, 300, operation="SUBTRACT")
+        gl.new(lit, below.inputs[0])
+        below.inputs[1].default_value = (0.18, 0.18, 0.18)
+        scaled_c = node("ShaderNodeVectorMath", 400, 300, operation="SCALE")
+        gl.new(below.outputs["Vector"], scaled_c.inputs[0])
+        gl.new(steep.outputs["Value"], scaled_c.inputs["Scale"])
+        above = node("ShaderNodeVectorMath", 600, 300, operation="ADD")
+        gl.new(scaled_c.outputs["Vector"], above.inputs[0])
+        above.inputs[1].default_value = (0.18, 0.18, 0.18)
+        floor = node("ShaderNodeVectorMath", 800, 300, operation="MAXIMUM")
+        gl.new(above.outputs["Vector"], floor.inputs[0])
+        floor.inputs[1].default_value = (0.0, 0.0, 0.0)
+        emit("Base Color", "NodeSocketColor", floor.outputs["Vector"])
+    roughness = tex("roughness")
+    if roughness:
+        add("Roughness", "NodeSocketFloat", panel=surface_panel, default=1.0, lo=0.0, hi=2.0)
+        add("Roughness Bias", "NodeSocketFloat", panel=surface_panel, default=0.0, lo=-1.0, hi=1.0)
+        scaled = node("ShaderNodeMath", -400, -100, operation="MULTIPLY")
+        gl.new(roughness.outputs["Color"], scaled.inputs[0])
+        gl.new(gi.outputs["Roughness"], scaled.inputs[1])
+        biased = node("ShaderNodeMath", -200, -100, operation="ADD", use_clamp=True)
+        gl.new(scaled.outputs["Value"], biased.inputs[0])
+        gl.new(gi.outputs["Roughness Bias"], biased.inputs[1])
+        emit("Roughness", "NodeSocketFloat", biased.outputs["Value"])
+    if metal := tex("metalness"):
+        emit("Metallic", "NodeSocketFloat", metal.outputs["Color"])
+    if opacity := tex("opacity"):
+        emit("Alpha", "NodeSocketFloat", opacity.outputs["Color"])
+    if translucency := tex("translucency", color=True):
+        emit("Translucency", "NodeSocketColor", translucency.outputs["Color"])
+    if normal := tex("normal"):
+        add("Normal Strength", "NodeSocketFloat", panel=normal_panel, default=1.0, lo=0.0, hi=2.0)
+        nmap = node("ShaderNodeNormalMap", -400, -400)
+        gl.new(normal.outputs["Color"], nmap.inputs["Color"])
+        gl.new(gi.outputs["Normal Strength"], nmap.inputs["Strength"])
+        emit("Normal", "NodeSocketVector", nmap.outputs["Normal"])
+
+    group = nodes.new("ShaderNodeGroup")
+    group.node_tree, group.name, group.label, group.location = ng, name, name, (-330, 0)
+    group.width = 260
+    links.new(mapping.outputs["Vector"], group.inputs["Vector"])
+    for label, socket in (("Base Color", "Base Color"), ("Roughness", "Roughness"), ("Metallic", "Metallic"),
+                          ("Normal", "Normal")):
+        if label in group.outputs:
+            links.new(group.outputs[label], bsdf.inputs[socket])
+    surface = bsdf.outputs["BSDF"]
+    if "Translucency" in group.outputs:
+        # Thin leaves: light passing through, then cut out by alpha (alpha on the BSDF alone would
+        # leave the translucent lobe visible in the holes).
+        trans, blend = nodes.new("ShaderNodeBsdfTranslucent"), nodes.new("ShaderNodeMixShader")
+        trans.location, blend.location = (0, -300), (300, 0)
+        blend.inputs["Fac"].default_value = 0.35
+        links.new(group.outputs["Translucency"], trans.inputs["Color"])
+        links.new(surface, blend.inputs[1])
+        links.new(trans.outputs["BSDF"], blend.inputs[2])
+        surface = blend.outputs["Shader"]
+        if "Alpha" in group.outputs:
+            clear, cut = nodes.new("ShaderNodeBsdfTransparent"), nodes.new("ShaderNodeMixShader")
+            clear.location, cut.location = (300, -300), (550, 0)
+            links.new(group.outputs["Alpha"], cut.inputs["Fac"])
+            links.new(clear.outputs["BSDF"], cut.inputs[1])
+            links.new(surface, cut.inputs[2])
+            surface = cut.outputs["Shader"]
+        out.location = (800, 0)
+        links.new(surface, out.inputs["Surface"])
+    elif "Alpha" in group.outputs:
+        links.new(group.outputs["Alpha"], bsdf.inputs["Alpha"])
+    return mat
+
+
 def import_meshes(folder):
     """Import the most detailed LOD of every variation. -> (objects, lod index)."""
     by_lod = {}
@@ -187,7 +347,7 @@ def build(folder, library):
 
     if objects:
         # One asset per variation: plants ship 5-10 meshes meant to be placed individually.
-        mat = build_material(name, maps, displace=False)
+        mat = build_group_material(name, maps)
         for i, obj in enumerate(objects, 1):
             obj.data.materials.clear()
             obj.data.materials.append(mat)
