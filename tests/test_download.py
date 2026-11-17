@@ -429,5 +429,56 @@ class Speed(unittest.TestCase):
         self.assertAlmostEqual(eta, 900_000 / 50_000)
 
 
+class DiskSpace(unittest.TestCase):
+    TOTAL = sum(map(len, FILES.values()))
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dest = Path(self.tmp.name)
+        self.chunk, download.CHUNK = download.CHUNK, 64_000
+        self.margin, download.MARGIN = download.MARGIN, 0
+        self.delays, download.RETRY_DELAYS = download.RETRY_DELAYS, ()
+
+    def tearDown(self):
+        download.CHUNK, download.MARGIN, download.RETRY_DELAYS = self.chunk, self.margin, self.delays
+        self.tmp.cleanup()
+
+    def test_too_little_space_is_refused_before_any_request(self):
+        with TestServer(FILES) as server:
+            with self.assertRaises(download.DiskFull) as ctx:
+                download.fetch_all(plan(server, self.dest), free_space=lambda path: self.TOTAL - 1)
+            self.assertEqual(server.requests(), [])
+        self.assertEqual(download.reason(ctx.exception), "Not enough disk space")
+
+    def test_exactly_enough_space_is_fine(self):
+        with TestServer(FILES) as server:
+            download.fetch_all(plan(server, self.dest), free_space=lambda path: self.TOTAL)
+        self.assertEqual((self.dest / "a/big.bin").read_bytes(), FILES["a/big.bin"])
+
+    def test_the_safety_margin_is_kept_free(self):
+        download.MARGIN = 1_000
+        with TestServer(FILES) as server:
+            with self.assertRaises(download.DiskFull):
+                download.fetch_all(plan(server, self.dest), free_space=lambda path: self.TOTAL + 999)
+
+    def test_bytes_from_an_earlier_attempt_do_not_need_space_again(self):
+        with TestServer(FILES) as server:
+            server.fail = {n: 500 for n in range(4, 100)}  # leaves chunks 0-2 of the big file on disk
+            with self.assertRaises(Exception):
+                download.fetch_all(plan(server, self.dest), workers=1)
+            server.fail, server.log[:] = {}, []
+            missing = self.TOTAL - 3 * 64_000
+            with self.assertRaises(download.DiskFull):
+                download.fetch_all(plan(server, self.dest), workers=1, free_space=lambda path: missing - 1)
+            self.assertEqual(server.requests(), [])
+            download.fetch_all(plan(server, self.dest), workers=1, free_space=lambda path: missing)
+        self.assertEqual((self.dest / "a/big.bin").read_bytes(), FILES["a/big.bin"])
+
+    def test_finished_files_need_no_space(self):
+        with TestServer(FILES) as server:
+            download.fetch_all(plan(server, self.dest))
+            download.fetch_all(plan(server, self.dest), free_space=lambda path: 0)
+
+
 if __name__ == "__main__":
     unittest.main()

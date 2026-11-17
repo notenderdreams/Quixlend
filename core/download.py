@@ -5,6 +5,7 @@ import json
 import os
 import queue
 import random
+import shutil
 import threading
 import time
 import urllib.error
@@ -19,6 +20,10 @@ SECTIONS = ("json", "brushes", "billboards", "components", "meshes")
 
 
 class DownloadError(Exception):
+    pass
+
+
+class DiskFull(DownloadError):
     pass
 
 
@@ -41,6 +46,8 @@ def retryable(e):
 
 def reason(e):
     """Short user-facing explanation of why a download failed."""
+    if isinstance(e, DiskFull):
+        return "Not enough disk space"
     if isinstance(e, Cancelled):
         return "Cancelled"
     if isinstance(e, urllib.error.HTTPError):
@@ -189,17 +196,25 @@ class _Rate:
         return bps, ((total - done) / bps if bps > 0 else None)
 
 
+MARGIN = 64 << 20  # bytes that must stay free on top of what the download needs
+
+
+def _free(path):
+    return shutil.disk_usage(path).free
+
+
 MAX_REFRESHES = 2  # fresh sets of links requested per download before giving up
 
 
-def fetch_all(files, progress=None, workers=8, refresh=None, cancel=None, speed=None):
+def fetch_all(files, progress=None, workers=8, refresh=None, cancel=None, speed=None, free_space=_free):
     """Download planned files. Big files are split into parallel byte-range chunks, biggest first;
     a server that ignores ranges is streamed whole. progress(done_bytes, total_bytes) is called from
     worker threads. `refresh()`, if given, returns a new plan for the same files with fresh links; it is
     called when a link has expired (HTTP 403) and the interrupted work is retried with the new links.
     `speed(bytes_per_second, seconds_left)`, if given, is called alongside progress with a smoothed
     estimate (both None until there is enough data). Setting the `cancel` threading.Event stops the workers promptly, deletes the partial files and raises
-    Cancelled."""
+    Cancelled. Before any request, the bytes still to fetch (files and chunks already on disk don't count)
+    must fit in `free_space(folder)` plus MARGIN, or DiskFull is raised."""
     cancel = cancel or threading.Event()
     links, renewed = {}, [0, threading.Lock()]  # path -> current uri; [refresh count, lock]
     total, done, lock = sum(size or 0 for _, _, size in files), [0], threading.Lock()
@@ -315,7 +330,7 @@ def fetch_all(files, progress=None, workers=8, refresh=None, cancel=None, speed=
             finally:
                 todo.task_done()
 
-    started = []
+    started, needed = [], 0
     for uri, path, size in sorted(files, key=lambda f: -(f[2] or 0)):
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.exists() and size and path.stat().st_size == size:
@@ -324,19 +339,24 @@ def fetch_all(files, progress=None, workers=8, refresh=None, cancel=None, speed=
         f = _File(uri, path, size, links)
         started.append(f)
         if not size or size <= CHUNK:
+            needed += size or 0
             put(lambda f=f: attempt(lambda on: stream(f, on)), size or 0)
         elif (have := f.resume()) is None:
+            needed += size
             put(lambda f=f: attempt(lambda on: first(f, on)), size)
         else:  # an earlier attempt left chunks on disk: fetch only the missing ones
             for i in have:
                 on_bytes(f.span(i)[1] - f.span(i)[0] + 1)
             missing = [i for i in range(f.chunks()) if i not in have]
+            needed += sum(f.span(i)[1] - f.span(i)[0] + 1 for i in missing)
             f.left = len(missing)
             if not missing:
                 put(f.finish, size)
             for i in missing:
                 put(lambda f=f, i=i: attempt(lambda on: chunk(f, *f.span(i), on)), size)
 
+    if needed and files and needed + MARGIN > free_space(files[0][1].parent):
+        raise DiskFull("Not enough disk space")
     rate.start(done[0])  # bytes already on disk from an earlier attempt are not transfer speed
     threads = [threading.Thread(target=worker, daemon=True) for _ in range(workers)]
     for t in threads:
