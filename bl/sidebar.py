@@ -29,7 +29,7 @@ def scale():
 def metrics(region):
     """Grid geometry for a sidebar region; shared by the panel (to reserve space), drawing and hit-testing."""
     s = scale()
-    left, gap, label = 10 * s, 8 * s, 38 * s
+    left, gap, label = 10 * s, 8 * s, 30 * s
     width = max(40 * s, region.width - left - 30 * s)  # tab strip and scrollbar
     cols = max(1, int((width + gap) // (100 * s + gap)))
     card = (width - (cols - 1) * gap) / cols
@@ -49,12 +49,34 @@ def cells(region):
     return m, out
 
 
-def hit_at(region, x, y):
+def buttons(m, hit, x, y):
+    """(main, res) button rects (x, y, w, h); res is None once downloaded or while downloading."""
+    pad = 4 * scale()
+    bx, by, bh = x + pad, y - m["label"] + pad, m["label"] - 2 * pad
+    st = ui.state
+    if hit["id"] in st.local or hit["id"] in st.progress:
+        return (bx, by, m["card"] - 2 * pad, bh), None
+    res_w = 46 * scale()
+    main_w = m["card"] - 3 * pad - res_w
+    return (bx, by, main_w, bh), (bx + main_w + pad, by, res_w, bh)
+
+
+def _inside(rect, px, py):
+    return rect and rect[0] <= px <= rect[0] + rect[2] and rect[1] <= py <= rect[1] + rect[3]
+
+
+def zone_at(region, px, py):
+    """(hit, zone) under the pointer; zone is "main", "res" or None (the image part)."""
     m, items = cells(region)
     for hit, cx, cy in items:
-        if cx <= x <= cx + m["card"] and cy - m["label"] <= y <= cy + m["card"]:
-            return hit
-    return None
+        if cx <= px <= cx + m["card"] and cy - m["label"] <= py <= cy + m["card"]:
+            main, res = buttons(m, hit, cx, cy)
+            return hit, "main" if _inside(main, px, py) else "res" if _inside(res, px, py) else None
+    return None, None
+
+
+def hit_at(region, x, y):
+    return zone_at(region, x, y)[0]
 
 
 def active(region):
@@ -67,6 +89,18 @@ def _rect(x, y, w, h, color):
     shader = gpu.shader.from_builtin("UNIFORM_COLOR")
     shader.uniform_float("color", color)
     batch_for_shader(shader, "TRI_FAN", {"pos": ((x, y), (x + w, y), (x + w, y + h), (x, y + h))}).draw(shader)
+
+
+def _rrect(x, y, w, h, radius, color):
+    """Rounded rectangle, like Blender's buttons."""
+    r = min(radius, w / 2, h / 2)
+    pts = []
+    for cx, cy, a0 in ((x + w - r, y + r, -90), (x + w - r, y + h - r, 0), (x + r, y + h - r, 90), (x + r, y + r, 180)):
+        pts += [(cx + r * math.cos(math.radians(a0 + i * 15)), cy + r * math.sin(math.radians(a0 + i * 15)))
+                for i in range(7)]
+    shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+    shader.uniform_float("color", color)
+    batch_for_shader(shader, "TRI_FAN", {"pos": [(x + w / 2, y + h / 2)] + pts + [pts[0]]}).draw(shader)
 
 
 def _image(image, x, y, w, h):
@@ -86,26 +120,40 @@ def _text(text, x, y, size, color, max_width):
 
 
 def _colors():
-    widgets = bpy.context.preferences.themes[0].user_interface
-    text = (*widgets.wcol_box.text, 1)
-    background = tuple(widgets.wcol_box.inner)
-    dim = tuple(a * 0.65 + b * 0.35 for a, b in zip(text, background))
-    return {"card": tuple(widgets.wcol_box.inner), "hover": tuple(widgets.wcol_list_item.inner_sel),
-            "text": text, "selected_text": (*widgets.wcol_list_item.text_sel, 1),
-            "dim": dim, "accent": tuple(widgets.wcol_progress.item)}
+    ui_theme = bpy.context.preferences.themes[0].user_interface
+    btn = ui_theme.wcol_regular
+    return {"card": tuple(ui_theme.wcol_box.inner), "accent": tuple(ui_theme.wcol_progress.item),
+            "button": (*btn.inner[:3], 1), "button_text": (*btn.text, 1),
+            "footer": _lift((*ui_theme.wcol_box.inner[:3], 1), 0.07)}
 
 
-def _status(asset_id, colors):
+def _lift(c, amount):
+    return (*(a + (1 - a) * amount for a in c[:3]), c[3])
+
+
+def _main_label(asset_id):
     st = ui.state
     if asset_id in st.progress:
-        return f"Downloading {int(st.progress[asset_id] * 100)}%", colors["text"]
-    if asset_id in st.errors:
-        return f"Failed: {st.errors[asset_id]}", colors["text"]
+        return f"Downloading {int(st.progress[asset_id] * 100)}%"
     if asset_id in st.local:
-        return "Downloaded · Drag to place", colors["dim"]
+        return "Import"
+    if asset_id in st.errors:
+        return "Retry"
     if st.owned is not None and asset_id not in st.owned:
-        return "Not in your library", colors["dim"]
-    return "Download", colors["dim"]
+        return "Not in library"
+    return "Download"
+
+
+def _draw_button(rect, label, fill, text, hovered, colors, progress=None, dropdown=False):
+    x, y, w, h = rect
+    r = 3 * scale()
+    _rrect(x, y, w, h, r, _lift(fill, 0.12) if hovered else fill)
+    if progress is not None:
+        _rrect(x, y, max(w * progress, 2 * r), h, r, colors["accent"])
+    size = 10 * scale()
+    blf.size(0, size)
+    tw = blf.dimensions(0, label)[0]
+    _text(label, x + max(4 * scale(), (w - tw) / 2 - (5 * scale() if dropdown else 0)), y + (h - size) / 2 + 1.5 * scale(), size, text, w - 8 * scale())
 
 
 def draw_grid():
@@ -122,19 +170,29 @@ def draw_grid():
             continue
         asset_id, card = hit["id"], m["card"]
         _rect(x, y - m["label"], card, card + m["label"], colors["card"])
+        _rect(x, y - m["label"], card, m["label"], colors["footer"])
         _rect(x, y, card, card, (0, 0, 0, 1))
-        if image :=ui.thumb_image(hit):
+        if image := ui.thumb_image(hit):
             width, height = image.size
             fit = (card - 4 * s) / max(width, height, 1)
             w, h = width * fit, height * fit
             _image(image, x + (card - w) / 2, y + (card - h) / 2, w, h)
-        if asset_id in ui.state.progress:
-            _rect(x, y, card, 3 * s, colors["card"])
-            _rect(x, y, card * ui.state.progress[asset_id], 3 * s, colors["accent"])
-        lift = (lambda c: (*(a + (1 - a) * 0.35 for a in c[:3]), c[3])) if hover == (region.as_pointer(), asset_id) else (lambda c: c)
-        _text(hit["name"], x + 6 * s, y - 15 * s, 11 * s, lift(colors["text"]), card - 12 * s)
-        status, color = _status(asset_id, colors)
-        _text(status, x + 6 * s, y - 30 * s, 10 * s, lift(color), card - 12 * s)
+        over = hover[:2] == (region.as_pointer(), asset_id) if hover else False
+        zone = hover[2] if over else None
+        _rect(x, y + card - 20 * s, card, 20 * s, (0, 0, 0, 0.6))
+        _text(hit["name"], x + 6 * s, y + card - 14 * s, 11 * s, (1, 1, 1, 1) if over else (0.8, 0.8, 0.8, 1), card - 12 * s)
+        main, res = buttons(m, hit, x, y)
+        local, busy = asset_id in ui.state.local, asset_id in ui.state.progress
+        unavailable = ui.state.owned is not None and asset_id not in ui.state.owned
+        _draw_button(main, _main_label(asset_id), colors["button"], colors["button_text"],
+                     zone == "main" and not busy and not unavailable, colors,
+                     ui.state.progress.get(asset_id))
+        if res:
+            _draw_button(res, ui.res_label(), colors["button"], colors["button_text"], zone == "res", colors, dropdown=True)
+            ax, ay, a = res[0] + res[2] - 9 * s, res[1] + res[3] / 2, 2.5 * s  # dropdown arrow
+            shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+            shader.uniform_float("color", colors["button_text"])
+            batch_for_shader(shader, "TRIS", {"pos": ((ax - a, ay + a * 0.6), (ax + a, ay + a * 0.6), (ax, ay - a * 0.8))}).draw(shader)
     gpu.state.blend_set("NONE")
     st = ui.state
     if items and not st.loading and st.page + 1 < st.pages and items[-1][2] + m["card"] >= 0:
@@ -207,8 +265,8 @@ class QUIXLEND_OT_hover(bpy.types.Operator):
     def invoke(self, context, event):
         global hover
         region = context.region
-        hit = hit_at(region, event.mouse_region_x, event.mouse_region_y) if region and active(region) else None
-        current = (region.as_pointer(), hit["id"]) if hit else None
+        hit, zone = zone_at(region, event.mouse_region_x, event.mouse_region_y) if region and active(region) else (None, None)
+        current = (region.as_pointer(), hit["id"], zone) if hit else None
         if current != hover:
             hover = current
             context.area.tag_redraw()
@@ -225,7 +283,7 @@ class QUIXLEND_OT_card(bpy.types.Operator):
         region = context.region
         if not region or not active(region):
             return {"PASS_THROUGH"}
-        self.hit = hit_at(region, event.mouse_region_x, event.mouse_region_y)
+        self.hit, self.zone = zone_at(region, event.mouse_region_x, event.mouse_region_y)
         if not self.hit:
             return {"PASS_THROUGH"}
         self.area, self.start = context.area, (event.mouse_x, event.mouse_y)
@@ -237,12 +295,12 @@ class QUIXLEND_OT_card(bpy.types.Operator):
         asset_id, st = self.hit["id"], ui.state
         if event.type == "MOUSEMOVE":
             moved = abs(event.mouse_x - self.start[0]) + abs(event.mouse_y - self.start[1])
-            if drag or (asset_id in st.local and moved > 6 * scale()):
+            if drag or (asset_id in st.local and self.zone != "res" and moved > 6 * scale()):
                 if not drag:
                     drag = {"hit": self.hit, "wire": preview(asset_id), "loc": None}
                 drag.update(x=event.mouse_x, y=event.mouse_y)
                 if drag["wire"]:
-                    found = self.locate(context, event)
+                    found = self.locate(context, event.mouse_x, event.mouse_y)
                     drag["loc"] = found[0] if found else None
                 self.area.tag_redraw()
         elif event.type == "LEFTMOUSE" and event.value == "RELEASE":
@@ -251,8 +309,14 @@ class QUIXLEND_OT_card(bpy.types.Operator):
                 drag = None
                 self.area.tag_redraw()
                 self.drop(context, event, chosen)
-            elif asset_id not in st.local and asset_id not in st.progress and (st.owned is None or asset_id in st.owned):
-                bpy.ops.quixlend.download(asset_id=asset_id)
+            elif self.zone == "res":
+                context.window_manager.popup_menu(ui.draw_res_menu, title="Texture Resolution")
+            elif self.zone == "main":
+                if asset_id in st.local:
+                    self.import_center(context)
+                elif asset_id not in st.progress and (st.owned is None or asset_id in st.owned):
+                    st.errors.pop(asset_id, None)
+                    bpy.ops.quixlend.download(asset_id=asset_id)
             return {"FINISHED"}
         elif event.type in {"ESC", "RIGHTMOUSE"}:
             drag = None
@@ -260,13 +324,13 @@ class QUIXLEND_OT_card(bpy.types.Operator):
             return {"CANCELLED"}
         return {"RUNNING_MODAL"}
 
-    def locate(self, context, event):
+    def locate(self, context, mx, my):
         """(location, target object or None) under the mouse: the surface hit, else the ground plane;
         None when the mouse is outside the viewport or over the sidebar."""
         region = next(r for r in self.area.regions if r.type == "WINDOW")
-        x, y = event.mouse_x - region.x, event.mouse_y - region.y
+        x, y = mx - region.x, my - region.y
         sidebar = next(r for r in self.area.regions if r.type == "UI")
-        over_sidebar = sidebar.x <= event.mouse_x <= sidebar.x + sidebar.width
+        over_sidebar = sidebar.x <= mx <= sidebar.x + sidebar.width
         if over_sidebar or not (0 <= x <= region.width and 0 <= y <= region.height):
             return None
         rv3d = self.area.spaces.active.region_3d
@@ -279,9 +343,19 @@ class QUIXLEND_OT_card(bpy.types.Operator):
                 or context.scene.cursor.location
         return location, target
 
+    def import_center(self, context):
+        """Import at the middle of the 3D viewport (what is under it, else the ground)."""
+        region = next(r for r in self.area.regions if r.type == "WINDOW")
+        found = self.locate(context, region.x + region.width / 2, region.y + region.height / 2)
+        location, target = found or (None, None)
+        with context.temp_override(area=self.area, region=region):
+            message = ui.place(context, self.hit["id"], location, target, pick=random.choice)
+        if message:
+            self.report({"WARNING"}, message)
+
     def drop(self, context, event, chosen):
         """Place the asset exactly where the preview was: same variation, same spot."""
-        found = self.locate(context, event)
+        found = self.locate(context, event.mouse_x, event.mouse_y)
         if not found:
             return  # released outside the viewport: cancel
         location, target = found

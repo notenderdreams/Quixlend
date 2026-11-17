@@ -110,6 +110,15 @@ def _thumb(hit):
     return path
 
 
+def res_label():
+    items = prefs().bl_rna.properties["resolution"].enum_items
+    return items[prefs().resolution].name
+
+
+def draw_res_menu(self, context):
+    self.layout.prop(prefs(), "resolution", expand=True)
+
+
 def thumb_image(hit):
     """Thumbnail datablock; undo/redo invalidates references, so look up by name and reload if gone."""
     name = f".quixlend_{hit['id']}"  # leading dot hides it from image lists
