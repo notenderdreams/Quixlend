@@ -89,6 +89,7 @@ class QUIXLEND_OT_card(bpy.types.Operator):
                 self.area.tag_redraw()
                 self.drop(context, event, chosen)
             elif self.zone is None:
+                pointer.hover = None  # the details popup replaces the hover preview
                 open_details(asset_id, context.window, self.area)
             elif self.zone == "copy":
                 self.copy_group(context)

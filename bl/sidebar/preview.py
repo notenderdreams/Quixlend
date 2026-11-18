@@ -111,6 +111,8 @@ def draw_preview():
     """Large preview of the hovered card, in the viewport beside the sidebar."""
     if not prefs().hover_preview or pointer.drag or not pointer.hover or pointer.hover[2] is not None:
         return
+    if state.opening:  # details are loading for a clicked card
+        return
     if time.time() - pointer.hover_since < prefs().hover_preview_delay * 0.9:
         return
     area, region = bpy.context.area, bpy.context.region
