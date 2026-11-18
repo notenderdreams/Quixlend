@@ -39,14 +39,17 @@ def problem(node: bpy.types.Node | None) -> str | None:
 def import_group() -> bpy.types.ShaderNodeTree:
     """The Color Variation group from assets/nodegroups.blend; an earlier import in this file is reused."""
     for group in bpy.data.node_groups:
-        if group.get(IMPORTED):
+        if group.get(IMPORTED) and group.name.startswith(VARIATION):
             return cast(bpy.types.ShaderNodeTree, group)
     before = set(bpy.data.node_groups)
     with bpy.data.libraries.load(str(NODEGROUPS)) as (src, dst):  # pyright: ignore[reportGeneralTypeIssues]
         if VARIATION not in src.node_groups:
             raise FileNotFoundError(f"'{VARIATION}' is not in {NODEGROUPS.name}")
         dst.node_groups = [VARIATION]
-    group = cast(bpy.types.ShaderNodeTree, next(g for g in bpy.data.node_groups if g not in before))
+    group = cast(
+        bpy.types.ShaderNodeTree,
+        next(g for g in bpy.data.node_groups if g not in before and g.name.startswith(VARIATION)),
+    )
     group.asset_clear()  # a working copy, not an entry in the user's Asset Browser
     group[IMPORTED] = True
     return group

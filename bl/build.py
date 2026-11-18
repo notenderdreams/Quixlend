@@ -16,6 +16,8 @@ import bpy
 
 MAP_RE = re.compile(r"_(?:(\d+)K_)?([A-Za-z]+?)(?:_LOD(\d+))?\.(jpe?g|png|exr)$", re.I)
 MESH_RE = re.compile(r"(?:_|^)LOD(\d+)[^/]*\.fbx$", re.I)
+NODEGROUPS = Path(__file__).parents[1] / "assets" / "nodegroups.blend"
+ANTI_TILING = "Quixlend Anti-Tiling"
 CATALOG_NS = uuid.UUID("5f1d3c1e-6c2b-4b8e-9a51-51a1e0b7c0de")
 TYPE_LABEL = {
     "3d": "3D Assets",
@@ -241,6 +243,49 @@ def build_group_material(name, maps, displace=False):
     return mat
 
 
+def import_anti_tiling() -> bpy.types.ShaderNodeTree:
+    """The Anti-Tiling group from assets/nodegroups.blend; an earlier import in this file is reused."""
+    for group in bpy.data.node_groups:
+        if group.get("quixlend_anti_tiling") and group.name.startswith(ANTI_TILING):
+            sockets = {i.name for i in group.interface.items_tree}  # type: ignore[attr-defined]
+            if "Cell Size" in sockets and "Blend" not in sockets:  # an older design's group is not reused
+                return cast(bpy.types.ShaderNodeTree, group)
+            group.name = f"{group.name} (old)"
+    before = set(bpy.data.node_groups)
+    with bpy.data.libraries.load(str(NODEGROUPS)) as (src, dst):  # pyright: ignore[reportGeneralTypeIssues]
+        if ANTI_TILING not in src.node_groups:
+            raise FileNotFoundError(f"'{ANTI_TILING}' is not in {NODEGROUPS.name}")
+        dst.node_groups = [ANTI_TILING]
+    group = cast(
+        bpy.types.ShaderNodeTree,
+        next(g for g in bpy.data.node_groups if g not in before and g.name.startswith(ANTI_TILING)),
+    )
+    group.asset_clear()  # a working copy, not an entry in the user's Asset Browser
+    group["quixlend_anti_tiling"] = True
+    return group
+
+
+def add_anti_tiling(group: bpy.types.Node) -> None:
+    """Put Anti-Tiling between whatever feeds a material group's Vector (the Mapping node) and the group."""
+    tree = cast(bpy.types.ShaderNodeTree, group.id_data)
+    node = cast(bpy.types.ShaderNodeGroup, tree.nodes.new("ShaderNodeGroup"))
+    node.node_tree = import_anti_tiling()
+    node.label = "Anti-Tiling"
+    gap = 40
+    node.location = group.location
+    for other in tree.nodes:  # make room: the group and everything right of it move over
+        if other != node and other.parent is None and other.location.x >= group.location.x:
+            other.location.x += node.width + gap
+    feeds = group.inputs["Vector"].links or []
+    if feeds:
+        tree.links.new(cast(bpy.types.NodeSocket, feeds[0].from_socket), node.inputs["Vector"])
+    else:  # nothing feeds the group: use the UV the textures would have had
+        uv = tree.nodes.new("ShaderNodeTexCoord")
+        uv.location = (node.location.x, node.location.y - 260)
+        tree.links.new(uv.outputs["UV"], node.inputs["Vector"])
+    tree.links.new(node.outputs["Vector"], group.inputs["Vector"])
+
+
 def import_meshes(folder):
     """Import the most detailed LOD of every variation. -> (objects, lod index)."""
     by_lod = {}
@@ -336,7 +381,10 @@ def build(folder, library, res=None):
         brush.texture = texture
         assets = [brush]
     else:
-        assets = [build_group_material(label, maps, displace=asset_type == "surface")]
+        mat = build_group_material(label, maps, displace=asset_type == "surface")
+        if asset_type == "surface":  # tileable textures laid over large areas: Anti-Tiling is on by default
+            add_anti_tiling(cast(bpy.types.ShaderNodeTree, mat.node_tree).nodes[label])
+        assets = [mat]
 
     catalog = catalog_id(library, asset_type, *(meta.get("categories") or [])[1:3])
     for asset in assets:

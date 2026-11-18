@@ -8,6 +8,7 @@ import bpy.utils.previews
 
 from . import catalog, search, store
 from .account import QUIXLEND_OT_login, QUIXLEND_OT_login_open, QUIXLEND_OT_logout
+from .anti_tiling import QUIXLEND_OT_anti_tiling, QUIXLEND_PT_anti_tiling
 from .details import QUIXLEND_OT_delete_resolution, QUIXLEND_OT_details
 from .library import ensure_asset_library, load_owned, scan_local
 from .placement import QUIXLEND_OT_copy_group
@@ -31,6 +32,8 @@ CLASSES = (
     QUIXLEND_PT_settings,
     QUIXLEND_OT_color_variation,
     QUIXLEND_PT_variation,
+    QUIXLEND_OT_anti_tiling,
+    QUIXLEND_PT_anti_tiling,
 )
 
 
