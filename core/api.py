@@ -4,6 +4,8 @@ Payload logic is a port of Bridge's `initiateDownload` (app/actions/myscans.js)
 and its helpers in app/utils/index.js.
 """
 
+from urllib.parse import quote
+
 from . import http
 
 API = "https://quixel.com/v1/"
@@ -13,6 +15,8 @@ ALGOLIA_HEADERS = {
     "X-Algolia-API-Key": "8f0c9e3c8c5bff863c6c56966c152853",
 }
 FBX = "application/x-fbx"
+FAB_SEARCH = "https://www.fab.com/search?q="  # Megascans are sold on Fab
+
 
 # Bridge's default-selected texture components (reducers/settings.js).
 COMPONENTS = [
@@ -43,6 +47,11 @@ def search(query="", page=0, per_page=48, asset_type=None, ids=None, category=No
     if filters:
         body["filters"] = " AND ".join(filters)
     return http.post(ALGOLIA_URL, body, ALGOLIA_HEADERS)
+
+
+def purchase_url(name):
+    """Page where an asset outside the user's library can be found and acquired."""
+    return FAB_SEARCH + quote(name)
 
 
 def categories(asset_type):

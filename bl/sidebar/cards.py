@@ -18,7 +18,7 @@ from ..store import state
 from ..transfer import download_size
 from . import gfx
 from .interact import pointer, ticked
-from .layout import active, buttons, cells
+from .layout import active, buttons, cells, unavailable
 
 
 def _transfer_label(asset_id):
@@ -129,6 +129,31 @@ def _draw_cancel(rect, fill, text, hovered):
             (cx + a, cy + sign * a + t),
         )
         batch_for_shader(shader, "TRIS", {"pos": pts}).draw(shader)
+
+
+def _draw_external(rect, fill, text, hovered):
+    """Box with an arrow leaving its top-right corner: the open-in-browser icon."""
+    x, y, w, h = rect
+    t = gfx.scale()
+    gfx.rrect(x, y, w, h, 3 * t, gfx.lift(fill, 0.12) if hovered else fill)
+    cx, cy, a = x + w / 2, y + h / 2, 3.5 * t
+    bg = gfx.lift(fill, 0.12) if hovered else fill
+    gfx.rrect(cx - a - t, cy - a - t, 2 * a, 2 * a, t, text)  # the box
+    gfx.rrect(cx - a, cy - a, 2 * a - 2 * t, 2 * a - 2 * t, 0.5 * t, bg)  # hollowed out
+    gfx.rect(cx - 0.5 * t, cy - 0.5 * t, 2 * a, 2 * a, bg)  # gap for the arrow, top right
+    shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+    shader.uniform_float("color", text)
+    d = 0.7 * t
+    tip = (cx + a, cy + a)
+    shaft = (
+        (cx - 0.5 * t - d, cy - 0.5 * t + d),
+        (cx - 0.5 * t + d, cy - 0.5 * t - d),
+        (tip[0] + d, tip[1] - d),
+        (tip[0] - d, tip[1] + d),
+    )
+    gfx.fan(shader, {"pos": shaft}).draw(shader)
+    head = ((tip[0] + t, tip[1] + t), (tip[0] - 2.5 * t, tip[1] + t), (tip[0] + t, tip[1] - 2.5 * t))
+    batch_for_shader(shader, "TRIS", {"pos": head}).draw(shader)
 
 
 def _draw_tick(rect, fill, text):
@@ -250,9 +275,8 @@ def draw_grid():
         main, res = buttons(m, hit, x, y)
         _local = asset_id in state.local
         busy = asset_id in state.progress or asset_id in state.working
-        unavailable = state.owned is not None and asset_id not in state.owned
         label = _main_label(asset_id, hit)
-        hovered = zone == "main" and not busy and not unavailable
+        hovered = zone == "main" and not busy and not unavailable(asset_id)
         if label in ("Apply", "Import") and ticked(asset_id, "main"):
             _draw_tick(main, colors["button"], colors["button_text"])
         elif label == "Download":
@@ -271,6 +295,8 @@ def draw_grid():
             _draw_tick(res, colors["button"], colors["button_text"])
         elif res and _local:
             _draw_copy(res, colors["button"], colors["button_text"], zone == "copy")
+        elif res and unavailable(asset_id):
+            _draw_external(res, colors["button"], colors["button_text"], zone == "buy")
         elif res and asset_id in state.cancel:
             _draw_cancel(res, colors["button"], colors["button_text"], zone == "res")
         elif res:

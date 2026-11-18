@@ -73,6 +73,11 @@ def cells(region):
     return m, out
 
 
+def unavailable(asset_id):
+    """Not downloaded and not in the user's library, so it cannot be downloaded."""
+    return state.owned is not None and asset_id not in state.owned and asset_id not in state.local
+
+
 def buttons(m, hit, x, y):
     """(main, res) button rects (x, y, w, h); res is None once downloaded or while downloading."""
     pad = 4 * gfx.scale()
@@ -89,6 +94,9 @@ def buttons(m, hit, x, y):
     if hit["id"] in st.local and hit.get("type") in ("surface", "atlas"):  # Apply + copy-node-group icon
         copy_w = 24 * gfx.scale()
         return (bx, by, m["card"] - 3 * pad - copy_w, bh), (bx + m["card"] - 2 * pad - copy_w, by, copy_w, bh)
+    if unavailable(hit["id"]):  # the second button opens the page where it can be bought
+        buy_w = 24 * gfx.scale()
+        return (bx, by, m["card"] - 3 * pad - buy_w, bh), (bx + m["card"] - 2 * pad - buy_w, by, buy_w, bh)
     if hit["id"] in st.local or hit["id"] in st.progress:
         return (bx, by, m["card"] - 2 * pad, bh), None
     res_w = 46 * gfx.scale()
@@ -101,12 +109,12 @@ def _inside(rect, px, py):
 
 
 def zone_at(region, px, py) -> tuple[dict[str, Any] | None, str | None]:
-    """(hit, zone) under the pointer; zone is "main", "res", "copy" or None (the image part)."""
+    """(hit, zone) under the pointer; zone is "main", "res", "copy", "buy" or None (the image part)."""
     m, items = cells(region)
     for hit, cx, cy in items:
         if cx <= px <= cx + m["card"] and cy - m["label"] <= py <= cy + m["card"]:
             main, res = buttons(m, hit, cx, cy)
-            second = "copy" if hit["id"] in state.local else "res"
+            second = "copy" if hit["id"] in state.local else "buy" if unavailable(hit["id"]) else "res"
             return hit, "main" if _inside(main, px, py) else second if _inside(res, px, py) else None
     return None, None
 

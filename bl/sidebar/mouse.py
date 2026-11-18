@@ -9,6 +9,7 @@ import bpy.utils.previews
 from bpy_extras import view3d_utils
 from mathutils.geometry import intersect_line_plane
 
+from ...core import api
 from ..details import open_details
 from ..placement import place
 from ..settings import draw_res_menu
@@ -91,6 +92,8 @@ class QUIXLEND_OT_card(bpy.types.Operator):
                 open_details(asset_id, context.window, self.area)
             elif self.zone == "copy":
                 self.copy_group(context)
+            elif self.zone == "buy":
+                bpy.ops.wm.url_open(url=api.purchase_url(self.hit["name"]))
             elif self.zone == "res" and asset_id in st.cancel:
                 cancel_download(asset_id)
             elif self.zone == "res":
