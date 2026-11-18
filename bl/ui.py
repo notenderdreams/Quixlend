@@ -93,6 +93,7 @@ class state:
     speed: dict[
         str, tuple[float | None, float | None]
     ] = {}  # id -> (bytes/s, seconds left) while downloading; None parts until known
+    transferred: dict[str, tuple[int, int]] = {}  # id -> (bytes done, bytes total) while downloading
     queue = Scheduler(2)  # at most two assets download at once; the rest wait in click order
     building: set[str] = set()  # ids past the network part, being built into the library
     cancel: dict[
@@ -373,6 +374,7 @@ class QUIXLEND_OT_download(bpy.types.Operator):
         def progress(done_bytes, total):
             if asset_id in state.cancelling:
                 return  # cancelled in the UI; the dying workers must not bring the bar back
+            state.transferred[asset_id] = (done_bytes, total)
             state.progress[asset_id] = done_bytes / max(
                 total, 1
             )  # the network part only; building is its own state
@@ -422,6 +424,7 @@ class QUIXLEND_OT_download(bpy.types.Operator):
         def settle(error):
             state.progress.pop(asset_id, None)
             state.speed.pop(asset_id, None)
+            state.transferred.pop(asset_id, None)
             state.cancelling.discard(asset_id)
             try:
                 if error and replacing:
@@ -486,6 +489,7 @@ def cancel_download(asset_id):
         state.cancelling.add(asset_id)  # settle() clears it when the workers are gone
         state.cancel.pop(asset_id, None)
         state.speed.pop(asset_id, None)
+    state.transferred.pop(asset_id, None)
     state.progress.pop(asset_id, None)
     jobs.redraw()
 

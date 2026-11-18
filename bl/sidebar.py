@@ -221,24 +221,27 @@ def _duration(seconds):
     )
 
 
-def _progress_label(asset_id):
-    """Longest-first variants, e.g. '45% - 42 MB/s - 8s left'; _draw_button keeps the first that fits."""
-    percent = f"{int(ui.state.progress[asset_id] * 100)}%"
+def _transfer_label(asset_id):
+    """Longest-first variants, e.g. '120/270 MB - 42 MB/s - 8s left'; the caller keeps the first that fits."""
     bps, eta = ui.state.speed.get(asset_id, (None, None))
-    if not bps:
-        return percent
+    done, total = ui.state.transferred.get(asset_id, (0, 0))
+    amount = ""
+    if total and total < 1e9:
+        amount = f"{done / 1e6:.0f}/{_size_text(total)}"
+    elif total:
+        amount = f"{done / 1e9:.1f}/{_size_text(total)}"
     rate = (
-        f"{bps / 1e6:.0f} MB/s"
+        ""
+        if not bps
+        else f"{bps / 1e6:.0f} MB/s"
         if bps >= 10e6
         else f"{bps / 1e6:.1f} MB/s"
         if bps >= 1e6
         else f"{bps / 1e3:.0f} KB/s"
     )
-    return (
-        [f"{percent} - {rate} - {_duration(eta)} left", f"{percent} - {rate}", percent]
-        if eta is not None
-        else [f"{percent} - {rate}", percent]
-    )
+    time_left = f"{_duration(eta)} left" if rate and eta is not None else ""
+    variants = [" - ".join(x for x in parts if x) for parts in ((amount, rate, time_left), (amount, rate), (rate,), (amount,))]
+    return list(dict.fromkeys(v for v in variants if v))
 
 
 def _progress_value(asset_id):
@@ -257,7 +260,7 @@ def _main_label(asset_id, hit):
     if st.queue.queued(asset_id) or asset_id in st.restart:
         return "Queued"
     if asset_id in st.progress:
-        return _progress_label(asset_id)
+        return f"{int(st.progress[asset_id] * 100)}%"
     if asset_id in st.local:
         return "Apply" if hit.get("type") in ("surface", "atlas") else "Import"
     if asset_id in st.errors:
@@ -432,6 +435,17 @@ def draw_grid():
             _text(error, x + 6 * s, y + 4.5 * s, 10 * s, (1, 1, 1, 1), card - 12 * s)
         if ui.state.opening == asset_id:
             _loader(x, y, card)
+        st = ui.state
+        if (
+            asset_id in st.progress
+            and not (asset_id in st.building or asset_id in st.working or asset_id in st.restart)
+            and not st.queue.queued(asset_id)
+            and (variants := _transfer_label(asset_id))
+        ):
+            blf.size(0, 10 * s)
+            text = next((v for v in variants if blf.dimensions(0, v)[0] <= card - 12 * s), variants[-1])
+            _rect(x, y, card, 16 * s, (0, 0, 0, 0.75))
+            _text(text, x + 6 * s, y + 4.5 * s, 10 * s, (1, 1, 1, 1), card - 12 * s)
         over = hover is not None and hover[:2] == (region.as_pointer(), asset_id)
         zone = hover[2] if hover and over else None
         _rect(x, y + card - 20 * s, card, 20 * s, (0, 0, 0, 0.6))
