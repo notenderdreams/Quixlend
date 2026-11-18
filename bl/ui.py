@@ -15,6 +15,7 @@ from .search import QUIXLEND_OT_search, load_categories, start_search
 from .settings import QUIXLEND_OT_clean, QUIXLEND_PT_settings, QuixlendPreferences
 from .store import icons, layout_of, session, state, wm_of
 from .transfer import QUIXLEND_OT_download
+from .variation import QUIXLEND_OT_color_variation, QUIXLEND_PT_variation
 
 CLASSES = (
     QuixlendPreferences,
@@ -28,6 +29,8 @@ CLASSES = (
     QUIXLEND_OT_copy_group,
     QUIXLEND_OT_clean,
     QUIXLEND_PT_settings,
+    QUIXLEND_OT_color_variation,
+    QUIXLEND_PT_variation,
 )
 
 
