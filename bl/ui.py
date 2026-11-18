@@ -8,7 +8,7 @@ import bpy.utils.previews
 
 from . import search, store
 from .account import QUIXLEND_OT_login, QUIXLEND_OT_login_open, QUIXLEND_OT_logout
-from .details import QUIXLEND_OT_details
+from .details import QUIXLEND_OT_delete_resolution, QUIXLEND_OT_details
 from .library import ensure_asset_library, load_owned
 from .placement import QUIXLEND_OT_copy_group
 from .search import QUIXLEND_OT_search, load_categories, start_search
@@ -21,6 +21,7 @@ CLASSES = (
     QUIXLEND_OT_search,
     QUIXLEND_OT_download,
     QUIXLEND_OT_details,
+    QUIXLEND_OT_delete_resolution,
     QUIXLEND_OT_login_open,
     QUIXLEND_OT_login,
     QUIXLEND_OT_logout,

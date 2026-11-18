@@ -177,7 +177,7 @@ class QUIXLEND_OT_card(bpy.types.Operator):
                 state.working.pop(asset_id, None)
             if message:
                 bpy.context.window_manager.popup_menu(
-                    lambda menu, _context: menu.label(text=message, icon="ERROR"), title="Quixlend"
+                    lambda menu, _context: menu.layout.label(text=message, icon="ERROR"), title="Quixlend"
                 )
             else:
                 flash(asset_id, "main", area)
