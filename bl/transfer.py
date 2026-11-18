@@ -58,6 +58,7 @@ class QUIXLEND_OT_download(bpy.types.Operator):
             jobs.redraw()
             return {"FINISHED"}
         resolution, blender = int(prefs().resolution), bpy.app.binary_path
+        anti_tiling = prefs().anti_tiling
         state.progress[asset_id] = 0.0
         state.errors.pop(asset_id, None)
         stop = state.cancel[asset_id] = threading.Event()
@@ -124,7 +125,7 @@ class QUIXLEND_OT_download(bpy.types.Operator):
                     state.building.add(asset_id)
                     dest, res = result
                     got.append(res)
-                    jobs.run(lambda: build_asset(asset_id, dest, res, root, blender), built)
+                    jobs.run(lambda: build_asset(asset_id, dest, res, root, blender, anti_tiling), built)
                 finally:
                     finished()  # network part over: the next queued download starts while this one builds
 
@@ -146,14 +147,15 @@ class QUIXLEND_OT_download(bpy.types.Operator):
         return {"FINISHED"}
 
 
-def build_asset(asset_id, dest, res, root, blender):
+def build_asset(asset_id, dest, res, root, blender, anti_tiling):
     """Build the asset's .blend from the files in `dest`, using the textures of size `res`. Runs on a worker thread."""
     thumb = HOME / "thumbs" / f"{asset_id}.jpg"  # Quixel's own catalog thumbnail
     if thumb.exists():
         shutil.copyfile(thumb, dest / "_Thumb.jpg")
     proc = subprocess.run(
         [blender, "-b", "--factory-startup", "--python", BUILD_SCRIPT, "--", str(dest), str(root)]
-        + ([str(res)] if res else []),
+        + [str(res or 0)]
+        + ([] if anti_tiling else ["--no-anti-tiling"]),
         capture_output=True,
         text=True,
     )
@@ -168,7 +170,7 @@ def build_resolution(asset_id, res, then):
         state.errors[asset_id] = "Asset folder is missing; download it again"
         return
     state.building.add(asset_id)
-    root, blender = library(), bpy.app.binary_path
+    root, blender, anti_tiling = library(), bpy.app.binary_path, prefs().anti_tiling
     jobs.redraw()
 
     def done(_, error):
@@ -181,7 +183,7 @@ def build_resolution(asset_id, res, then):
         refresh_asset_browsers()
         then()
 
-    jobs.run(lambda: build_asset(asset_id, dest, res, root, blender), done)
+    jobs.run(lambda: build_asset(asset_id, dest, res, root, blender, anti_tiling), done)
 
 
 def cancel_download(asset_id):

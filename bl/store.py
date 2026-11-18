@@ -152,6 +152,7 @@ if TYPE_CHECKING:
         fetch_sizes: bool
         max_columns: int
         asset_collections: bool
+        anti_tiling: bool
         hover_preview: bool
         hover_preview_delay: float
 

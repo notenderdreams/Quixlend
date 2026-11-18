@@ -92,6 +92,12 @@ class QuixlendPreferences(bpy.types.AddonPreferences):
         default=False,
         description="Put placed meshes in a sub-collection named after the asset, inside the Megascans collection",
     )
+    anti_tiling: BoolProperty(  # pyright: ignore[reportInvalidTypeForm]
+        name="Anti-Tiling on Surfaces",
+        default=True,
+        description="Attach Anti-Tiling to surface materials when they are built, so textures do not visibly repeat. "
+        "Applies to assets built from now on",
+    )
     hover_preview: BoolProperty(  # pyright: ignore[reportInvalidTypeForm]
         name="Hover Preview",
         default=True,
@@ -119,6 +125,7 @@ class QuixlendPreferences(bpy.types.AddonPreferences):
         layout.prop(self, "fetch_sizes")
         layout.prop(self, "max_columns")
         layout.prop(self, "asset_collections")
+        layout.prop(self, "anti_tiling")
         layout.prop(self, "hover_preview")
         row = layout.row()
         row.enabled = self.hover_preview
@@ -143,6 +150,7 @@ class QUIXLEND_PT_settings(bpy.types.Panel):
         layout.prop(prefs(), "fetch_sizes")
         layout.prop(prefs(), "max_columns")
         layout.prop(prefs(), "asset_collections")
+        layout.prop(prefs(), "anti_tiling")
         layout.prop(prefs(), "hover_preview")
         row = layout.row()
         row.enabled = prefs().hover_preview

@@ -348,7 +348,7 @@ def set_preview(datablock, folder):
     bpy.data.images.remove(img)
 
 
-def build(folder, library, res=None):
+def build(folder, library, res=None, anti_tiling=True):
     folder, library = Path(folder), Path(library)
     meta_file = next(
         (p for p in sorted(folder.glob("*.json")) if not p.name.startswith("_")), None
@@ -382,7 +382,9 @@ def build(folder, library, res=None):
         assets = [brush]
     else:
         mat = build_group_material(label, maps, displace=asset_type == "surface")
-        if asset_type == "surface":  # tileable textures laid over large areas: Anti-Tiling is on by default
+        if (
+            asset_type == "surface" and anti_tiling
+        ):  # tileable textures laid over large areas: Anti-Tiling is on by default
             add_anti_tiling(cast(bpy.types.ShaderNodeTree, mat.node_tree).nodes[label])
         assets = [mat]
 
@@ -406,4 +408,4 @@ def build(folder, library, res=None):
 
 if __name__ == "__main__":
     args = sys.argv[sys.argv.index("--") + 1 :]
-    build(args[0], args[1], int(args[2]) if len(args) > 2 else None)
+    build(args[0], args[1], int(args[2]) or None if len(args) > 2 else None, "--no-anti-tiling" not in args)
