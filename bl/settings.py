@@ -87,6 +87,11 @@ class QuixlendPreferences(bpy.types.AddonPreferences):
         description="Most thumbnail columns to show. 0: automatic, as many as fit the panel width",
         update=lambda self, context: jobs.redraw(),
     )
+    asset_collections: BoolProperty(  # pyright: ignore[reportInvalidTypeForm]
+        name="Collection per Asset",
+        default=False,
+        description="Put placed meshes in a sub-collection named after the asset, inside the Megascans collection",
+    )
     hover_preview: BoolProperty(  # pyright: ignore[reportInvalidTypeForm]
         name="Hover Preview",
         default=True,
@@ -113,6 +118,7 @@ class QuixlendPreferences(bpy.types.AddonPreferences):
         layout.prop(self, "resolution")
         layout.prop(self, "fetch_sizes")
         layout.prop(self, "max_columns")
+        layout.prop(self, "asset_collections")
         layout.prop(self, "hover_preview")
         row = layout.row()
         row.enabled = self.hover_preview
@@ -136,6 +142,7 @@ class QUIXLEND_PT_settings(bpy.types.Panel):
         layout.prop(prefs(), "resolution")
         layout.prop(prefs(), "fetch_sizes")
         layout.prop(prefs(), "max_columns")
+        layout.prop(prefs(), "asset_collections")
         layout.prop(prefs(), "hover_preview")
         row = layout.row()
         row.enabled = prefs().hover_preview

@@ -1,6 +1,7 @@
 """Mouse handling: hover highlight, click, and drag-and-drop of cards."""
 
 import random
+import re
 import time
 from typing import TYPE_CHECKING, Any, cast
 
@@ -15,11 +16,16 @@ from ..library import built_at_selected, has_selected
 from ..placement import place
 from ..settings import draw_res_menu
 from ..store import Result, prefs, state
-from ..transfer import cancel_download, switch_resolution
+from ..transfer import build_resolution, cancel_download
 from . import gfx
 from .interact import flash, pointer
 from .layout import active, zone_at
 from .preview import dwell, wireframe
+
+
+def _variation(name):
+    """Object name without its resolution, so the previewed variation matches at any texture size."""
+    return re.sub(r"_\d+K", "", name)
 
 
 class QUIXLEND_OT_hover(bpy.types.Operator):
@@ -102,7 +108,7 @@ class QUIXLEND_OT_card(bpy.types.Operator):
                 context.window_manager.popup_menu(draw_res_menu, title="Texture Resolution")
             elif self.zone == "main":
                 if asset_id in st.local and not has_selected(asset_id):
-                    bpy.ops.quixlend.download(asset_id=asset_id, replace=True)  # pyright: ignore[reportAttributeAccessIssue]
+                    bpy.ops.quixlend.download(asset_id=asset_id)  # pyright: ignore[reportAttributeAccessIssue]
                 elif asset_id in st.local:
                     self.import_at_cursor(context)
                 elif asset_id in st.working:
@@ -164,7 +170,7 @@ class QUIXLEND_OT_card(bpy.types.Operator):
             region = next(r for r in area.regions if r.type == "WINDOW")
             try:
                 with bpy.context.temp_override(window=window, area=area, region=region):
-                    message = place(bpy.context, asset_id, **kwargs)
+                    message = place(bpy.context, asset_id, name=hit["name"].strip(), **kwargs)
                     if not message:
                         bpy.ops.ed.undo_push(message="Quixlend: " + state.working[asset_id])
             finally:
@@ -185,7 +191,7 @@ class QUIXLEND_OT_card(bpy.types.Operator):
         if built_at_selected(asset_id):
             start()
         else:  # the textures of the chosen resolution are on disk but the asset still uses another: rebuild first
-            switch_resolution(asset_id, int(prefs().resolution), start)
+            build_resolution(asset_id, int(prefs().resolution), start)
 
     def import_at_cursor(self, context):
         """Import at the 3D cursor (materials go on the selected objects)."""
@@ -198,7 +204,11 @@ class QUIXLEND_OT_card(bpy.types.Operator):
             return  # released outside the viewport: cancel
         location, target = found
         pick = (
-            (lambda sources: next((o for o in sources if o.name == chosen), sources[0]))
+            (
+                lambda sources: next(
+                    (o for o in sources if _variation(o.name) == _variation(chosen)), sources[0]
+                )
+            )
             if chosen
             else random.choice
         )

@@ -6,75 +6,52 @@ import bpy
 import bpy.utils.previews
 from bpy.props import StringProperty
 
-from .store import Result, library
+from ..core import download
+from .library import usable_resolution
+from .store import Result, library, prefs
 
 
-def load_templates(asset_id):
-    """(objects, materials) of a downloaded asset, loaded once and reused; (None, None) if the file is missing."""
-    blend = next((library() / "Quixlend").glob(f"*/{asset_id}/{asset_id}.blend"), None)
+def load_templates(asset_id, res=None):
+    """(objects, materials) of a downloaded asset at texture size `res` (default: the chosen size, else the largest
+    built), loaded once and reused; (None, None) if the file is missing."""
+    res = res or usable_resolution(asset_id)
+    folder = next((library() / "Quixlend").glob(f"*/{asset_id}"), None)
+    blend = next(
+        (
+            p
+            for name in (f"{asset_id}_{(res or 0) // 1024}K.blend", f"{asset_id}.blend")
+            if folder and (p := folder / name).exists()
+        ),
+        None,
+    )
     if not blend:
         return None, None
+    key = download.blend_resolution(blend.name, asset_id) or 0  # 0: a file without a size in its name
     # Reuse datablocks from an earlier placement instead of appending duplicates.
-    objects = [o for o in bpy.data.objects if o.get("quixlend_id") == asset_id and o.get("quixlend_source")]
-    materials = [m for m in bpy.data.materials if m.get("quixlend_id") == asset_id]
+    objects = [o for o in bpy.data.objects if _loaded(o, asset_id, key) and o.get("quixlend_source")]
+    materials = [m for m in bpy.data.materials if _loaded(m, asset_id, key)]
     if not objects and not materials:
         with bpy.data.libraries.load(str(blend), assets_only=True) as (src, dst):  # pyright: ignore[reportGeneralTypeIssues]
             dst.objects, dst.materials = src.objects, src.materials
         objects, materials = dst.objects, dst.materials
         for block in objects + materials:
             block.asset_clear()
-            block["quixlend_id"] = asset_id
+            block["quixlend_id"], block["quixlend_res"] = asset_id, key
         for obj in objects:
             obj["quixlend_source"] = True  # pristine template, never linked to a scene
             obj.use_fake_user = True
     return objects, materials
 
 
-def reload_templates(asset_id):
-    """After a rebuild: swap datablocks loaded from the old .blend for the new ones; objects keep their material."""
-    old_m = sorted((m for m in bpy.data.materials if m.get("quixlend_id") == asset_id), key=lambda m: m.name)
-    old_o = [o for o in bpy.data.objects if o.get("quixlend_id") == asset_id and o.get("quixlend_source")]
-    if not (old_m or old_o):
-        return  # never loaded this session: the next use loads the new file
-    names = [m.name for m in old_m]
-    groups = {
-        cast(bpy.types.ShaderNodeGroup, n).node_tree
-        for m in old_m
-        if m.node_tree
-        for n in m.node_tree.nodes
-        if n.bl_idname == "ShaderNodeGroup"
-    }
-    groups = {g for g in groups if g}
-    images = {
-        cast(bpy.types.ShaderNodeTexImage, n).image
-        for g in groups
-        for n in g.nodes
-        if n.bl_idname == "ShaderNodeTexImage"
-    }
-    for block in (*old_m, *old_o):
-        del block["quixlend_id"]  # or load_templates would find them instead of loading the new file
-    _, loaded = load_templates(asset_id)
-    new_m = sorted(loaded or [], key=lambda m: m.name)
-    for old, new in zip(old_m, new_m):
-        old.user_remap(new)
-    for old in old_m:
-        bpy.data.materials.remove(old)
-    for obj in old_o:
-        bpy.data.objects.remove(obj)
-    for new, name in zip(new_m, names):
-        new.name = name
-    for group in groups:
-        if group.users - group.use_fake_user == 0:  # the old build's node group; the new material has its own
-            bpy.data.node_groups.remove(group)
-    for image in images:
-        if image and image.users - image.use_fake_user == 0:
-            bpy.data.images.remove(image)
+def _loaded(block, asset_id, res):
+    return block.get("quixlend_id") == asset_id and block.get("quixlend_res", 0) == res
 
 
-def place(context, asset_id, location=None, target=None, pick=None):
+def place(context, asset_id, location=None, target=None, pick=None, name=None):
     """Put a downloaded asset in the scene. Meshes go to `location` (default: 3D cursor);
     materials go on `target` (default: selected objects). Returns a warning message or None.
-    `pick` chooses one of several plant variations; without it all are laid out in a row."""
+    `pick` chooses one of several plant variations; without it all are laid out in a row.
+    With the "Collection per Asset" setting, meshes go in a sub-collection called `name`."""
     objects, materials = load_templates(asset_id)
     if objects is None:
         return "Asset file is missing; download it again"
@@ -90,6 +67,13 @@ def place(context, asset_id, location=None, target=None, pick=None):
             collection = bpy.data.collections.new("Megascans")
         if collection not in context.scene.collection.children_recursive:
             context.scene.collection.children.link(collection)
+        if name and prefs().asset_collections:
+            parent = collection
+            collection = next((c for c in parent.children if c.get("quixlend_id") == asset_id), None)
+            if collection is None:
+                collection = bpy.data.collections.new(name)
+                collection["quixlend_id"] = asset_id
+                parent.children.link(collection)
         for source in sources:
             obj = cast(bpy.types.Object, source.copy())
             del obj["quixlend_source"]

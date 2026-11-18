@@ -113,7 +113,7 @@ class state:
     resolutions: dict[
         str, dict[int, int]
     ] = {}  # id -> {texture size in pixels: bytes on disk}, downloaded assets
-    built: dict[str, int] = {}  # id -> the size its .blend currently uses
+    built: dict[str, set[int]] = {}  # id -> texture sizes that have a built .blend
     library_bytes: int | None = None  # disk used by downloaded assets, None until measured
     progress: dict[str, float] = {}  # id -> 0..1 while downloading
     speed: dict[
@@ -150,6 +150,7 @@ if TYPE_CHECKING:
         resolution: str
         fetch_sizes: bool
         max_columns: int
+        asset_collections: bool
         hover_preview: bool
         hover_preview_delay: float
 

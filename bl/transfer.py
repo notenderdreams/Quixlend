@@ -8,12 +8,11 @@ from pathlib import Path
 
 import bpy
 import bpy.utils.previews
-from bpy.props import BoolProperty, StringProperty
+from bpy.props import StringProperty
 
 from ..core import api, download
 from . import jobs
 from .library import have_resolution, measure_library, refresh_asset_browsers
-from .placement import reload_templates
 from .store import HOME, Result, client, library, prefs, state
 
 BUILD_SCRIPT = str(Path(__file__).with_name("build.py"))
@@ -49,13 +48,9 @@ class QUIXLEND_OT_download(bpy.types.Operator):
     bl_label = "Download"
     bl_description = "Download this asset and add it to the Asset Browser"
     asset_id: StringProperty()  # pyright: ignore[reportInvalidTypeForm]
-    replace: BoolProperty(  # pyright: ignore[reportInvalidTypeForm]
-        default=False, description="Download again at the chosen resolution, replacing the textures"
-    )
 
     def execute(self, context: bpy.types.Context) -> Result:
         asset_id, root = self.asset_id, library()
-        replacing = self.replace and asset_id in state.local
         if asset_id in state.progress or asset_id in state.restart:
             return {"FINISHED"}  # already queued, downloading or building
         if asset_id in state.cancelling:
@@ -65,10 +60,6 @@ class QUIXLEND_OT_download(bpy.types.Operator):
         resolution, blender = int(prefs().resolution), bpy.app.binary_path
         state.progress[asset_id] = 0.0
         state.errors.pop(asset_id, None)
-        if replacing:
-            state.local.discard(
-                asset_id
-            )  # the card shows progress; the old build stays on disk until the new one works
         stop = state.cancel[asset_id] = threading.Event()
 
         def progress(done_bytes, total):
@@ -102,16 +93,12 @@ class QUIXLEND_OT_download(bpy.types.Operator):
             state.transferred.pop(asset_id, None)
             state.cancelling.discard(asset_id)
             try:
-                if error and replacing:
-                    state.local.add(asset_id)  # the old build is still intact
                 if isinstance(error, download.Cancelled):
                     return  # not a failure: no error on the card
                 if error:
                     state.errors[asset_id] = download.reason(error)
                     return
                 state.local.add(asset_id)
-                if replacing:
-                    reload_templates(asset_id)
                 measure_library()
                 refresh_asset_browsers()
             finally:
@@ -174,8 +161,8 @@ def build_asset(asset_id, dest, res, root, blender):
         raise RuntimeError((proc.stderr or proc.stdout).strip().splitlines()[-1])
 
 
-def switch_resolution(asset_id, res, then):
-    """Rebuild a downloaded asset to use the textures of `res`, which are already on disk; then() runs when done."""
+def build_resolution(asset_id, res, then):
+    """Build the .blend for texture size `res`, whose textures are already on disk; then() runs when done."""
     dest = next((library() / "Quixlend").glob(f"*/{asset_id}"), None)
     if dest is None:
         state.errors[asset_id] = "Asset folder is missing; download it again"
@@ -191,7 +178,7 @@ def switch_resolution(asset_id, res, then):
             jobs.redraw()
             return
         have_resolution(asset_id, res)
-        reload_templates(asset_id)
+        refresh_asset_browsers()
         then()
 
     jobs.run(lambda: build_asset(asset_id, dest, res, root, blender), done)

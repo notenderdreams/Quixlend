@@ -530,6 +530,11 @@ class Resolutions(unittest.TestCase):
         paths = [Path("x_1K_Albedo.jpg"), Path("x_4K_Albedo.jpg"), Path("x_LOD0.fbx"), Path("x.blend")]
         self.assertEqual(download.resolutions_of(paths), {1024, 4096})
 
+    def test_blend_files_say_which_resolution_they_use(self):
+        self.assertEqual(download.blend_resolution("abc_2K.blend", "abc"), 2048)
+        self.assertIsNone(download.blend_resolution("abc.blend", "abc"))
+        self.assertIsNone(download.blend_resolution("abd_2K.blend", "abc"))
+
     def test_previews_and_billboards_are_not_resolutions(self):
         paths = [Path("x_2K_Albedo.jpg"), Path("x_8K_Preview.jpg"), Path("Billboards/x_4K_Albedo.png")]
         self.assertEqual(download.resolutions_of(paths), {2048})

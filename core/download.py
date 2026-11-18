@@ -70,6 +70,12 @@ def resolution_of(paths) -> int | None:
     return max(sizes, default=None)
 
 
+def blend_resolution(name, asset_id) -> int | None:
+    """Texture size a `<id>_<n>K.blend` file was built at; None for any other file name."""
+    m = re.fullmatch(rf"{re.escape(asset_id)}_(\d+)K\.blend", name)
+    return int(m.group(1)) * 1024 if m else None
+
+
 def resolutions_of(paths) -> set[int]:
     """Texture sizes in pixels found in file names; previews and billboards are not the asset's own maps."""
     return {

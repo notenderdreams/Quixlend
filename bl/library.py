@@ -12,12 +12,16 @@ from .store import HOME, client, library, prefs, state
 
 
 def scan_local():
-    state.local = {p.stem for p in (library() / "Quixlend").glob("*/*/*.blend") if p.stem == p.parent.name}
+    state.local = {
+        p.parent.name
+        for p in (library() / "Quixlend").glob("*/*/*.blend")
+        if p.stem == p.parent.name or download.blend_resolution(p.name, p.parent.name)
+    }
     measure_library()
 
 
 def _scan(root):
-    """(bytes on disk, {id: {texture size: bytes}}, {id: size its .blend uses}) for every asset folder."""
+    """(bytes on disk, {id: {texture size: bytes}}, {id: sizes that have a built .blend}) for every asset folder."""
     total, resolutions, built = 0, {}, {}
     for folder in root.glob("*/*"):
         found = {}
@@ -29,10 +33,9 @@ def _scan(root):
         if not found:
             continue
         resolutions[folder.name] = found
-        try:
-            built[folder.name] = json.loads((folder / "_built.json").read_text())["res"] or max(found)
-        except (OSError, ValueError, KeyError):
-            built[folder.name] = max(found)  # built before the size was recorded: one size was kept back then
+        built[folder.name] = {
+            res for p in folder.glob("*.blend") if (res := download.blend_resolution(p.name, folder.name))
+        }
     return total, resolutions, built
 
 
@@ -50,9 +53,9 @@ def measure_library():
 
 
 def have_resolution(asset_id, res):
-    """Record that `res` is on disk and in use, without waiting for the next scan."""
+    """Record that `res` is on disk and built, without waiting for the next scan."""
     state.resolutions.setdefault(asset_id, {}).setdefault(res, 0)  # bytes are filled in by the next scan
-    state.built[asset_id] = res
+    state.built.setdefault(asset_id, set()).add(res)
 
 
 def has_selected(asset_id):
@@ -62,9 +65,18 @@ def has_selected(asset_id):
 
 
 def built_at_selected(asset_id):
-    """The asset's .blend already uses the chosen texture size."""
+    """A .blend for the chosen texture size exists (or the asset is not scanned yet: assume so)."""
     res = int(prefs().resolution)
-    return state.built.get(asset_id, res) == res
+    return res in state.built.get(asset_id, {res})
+
+
+def usable_resolution(asset_id) -> int | None:
+    """Resolution whose .blend to load: the chosen one if built, else the largest built; None if unknown or none."""
+    res = int(prefs().resolution)
+    built = state.built.get(asset_id)
+    if built is None or res in built:
+        return res
+    return max(built, default=None)
 
 
 def ensure_asset_library():

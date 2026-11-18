@@ -305,7 +305,9 @@ def set_preview(datablock, folder):
 
 def build(folder, library, res=None):
     folder, library = Path(folder), Path(library)
-    meta_file = next(iter(sorted(folder.glob("*.json"))), None)
+    meta_file = next(
+        (p for p in sorted(folder.glob("*.json")) if not p.name.startswith("_")), None
+    )  # not _built.json
     meta = json.loads(meta_file.read_text()) if meta_file else {}
     asset_id = meta.get("id") or folder.name
     name = (meta.get("name") or asset_id).strip()
@@ -315,23 +317,26 @@ def build(folder, library, res=None):
     maps = find_maps(folder, lod, res)
     if not maps:
         raise SystemExit(f"No texture maps found in {folder}")
+    sizes = [int(m.group(1)) * 1024 for p in maps.values() if (m := MAP_RE.search(p.name)) and m.group(1)]
+    built_res = max(sizes, default=None)
+    label = f"{asset_id}_{built_res // 1024}K" if built_res else asset_id  # what the datablocks are called
 
     if objects:
         # One asset per variation: plants ship 5-10 meshes meant to be placed individually.
-        mat = build_group_material(name, maps)
+        mat = build_group_material(label, maps)
         for i, obj in enumerate(objects, 1):
             obj.data.materials.clear()
             obj.data.materials.append(mat)
-            obj.name = name if len(objects) == 1 else f"{name} {i:02d}"
+            obj.name = label if len(objects) == 1 else f"{label} {i:02d}"
         assets = objects
     elif set(maps) == {"brush"}:
-        texture = bpy.data.textures.new(name, "IMAGE")
+        texture = bpy.data.textures.new(label, "IMAGE")
         cast(bpy.types.ImageTexture, texture).image = bpy.data.images.load(str(maps["brush"]))
-        brush = bpy.data.brushes.new(name, mode="SCULPT")
+        brush = bpy.data.brushes.new(label, mode="SCULPT")
         brush.texture = texture
         assets = [brush]
     else:
-        assets = [build_group_material(name, maps, displace=asset_type == "surface")]
+        assets = [build_group_material(label, maps, displace=asset_type == "surface")]
 
     catalog = catalog_id(library, asset_type, *(meta.get("categories") or [])[1:3])
     for asset in assets:
@@ -339,17 +344,14 @@ def build(folder, library, res=None):
         data = asset.asset_data
         assert data is not None  # asset_mark() just created it
         data.author = "Quixel Megascans"
-        data.description = f"Megascans {asset_id}"
+        data.description = f"{name} - Megascans {asset_id}"
         data.catalog_id = catalog
-        for tag in dict.fromkeys([asset_id, *(meta.get("tags") or [])]):
+        for tag in dict.fromkeys([asset_id, name, *(meta.get("tags") or [])]):  # the name keeps it searchable
             data.tags.new(str(tag))
         set_preview(asset, folder)
 
-    sizes = [int(m.group(1)) * 1024 for p in maps.values() if (m := MAP_RE.search(p.name)) and m.group(1)]
-    (folder / "_built.json").write_text(
-        json.dumps({"res": max(sizes, default=None)})
-    )  # which resolution it uses
-    blend = folder / f"{asset_id}.blend"
+    blend = folder / f"{label}.blend"  # one file per resolution, so every size stays available
+    (folder / f"{asset_id}.blend").unlink(missing_ok=True)  # the single file older versions wrote
     bpy.data.libraries.write(str(blend), set(assets), path_remap="RELATIVE", fake_user=True, compress=True)
     print(f"QUIXLEND_BUILT {blend}")
 
