@@ -1,4 +1,5 @@
-from .bl import jobs, sidebar, ui
+from .bl import jobs, ui
+from .bl.sidebar import install as sidebar
 
 
 def register():
