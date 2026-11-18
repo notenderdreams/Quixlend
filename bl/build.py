@@ -340,11 +340,22 @@ def set_preview(datablock, folder):
     )
     if not src:
         return
+    import numpy as np
+
+    size = 256
     img = bpy.data.images.load(str(src))
-    img.scale(256, 256)
+    w, h = img.size
+    fit = size / max(w, h, 1)  # keep the aspect ratio: letterbox instead of stretching to a square
+    nw, nh = max(1, round(w * fit)), max(1, round(h * fit))
+    img.scale(nw, nh)
+    px = np.empty(nw * nh * 4, np.float32)
+    img.pixels.foreach_get(px)
+    out = np.zeros((size, size, 4), np.float32)  # transparent bars
+    x0, y0 = (size - nw) // 2, (size - nh) // 2
+    out[y0 : y0 + nh, x0 : x0 + nw] = px.reshape(nh, nw, 4)
     preview = datablock.preview_ensure()
-    preview.image_size = (256, 256)
-    preview.image_pixels_float.foreach_set(img.pixels[:])  # pyright: ignore[reportIndexIssue]
+    preview.image_size = (size, size)
+    preview.image_pixels_float.foreach_set(out.ravel())  # pyright: ignore[reportIndexIssue]
     bpy.data.images.remove(img)
 
 
