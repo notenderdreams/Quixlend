@@ -64,6 +64,8 @@ def metrics(region):
     left, gap, label = 10 * s, 8 * s, 30 * s
     width = max(40 * s, region.width - left - 30 * s)  # tab strip and scrollbar
     cols = max(1, int((width + gap) // (max(100 * s, _min_card()) + gap)))
+    if limit := ui.prefs().max_columns:  # 0 = automatic
+        cols = min(cols, limit)
     card = (width - (cols - 1) * gap) / cols
     rows = math.ceil(len(ui.state.hits) / cols)
     return {

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 import bpy
 import bpy.utils.previews
-from bpy.props import BoolProperty, EnumProperty, FloatProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, StringProperty
 
 from ..core import api, auth, download, http
 from ..core.scheduler import Scheduler
@@ -148,6 +148,7 @@ if TYPE_CHECKING:
         library: str
         resolution: str
         fetch_sizes: bool
+        max_columns: int
         hover_preview: bool
         hover_preview_delay: float
 
@@ -835,6 +836,14 @@ class QuixlendPreferences(bpy.types.AddonPreferences):
         default="4096",
         items=[("1024", "1K", ""), ("2048", "2K", ""), ("4096", "4K", ""), ("8192", "8K", "")],
     )
+    max_columns: IntProperty(  # pyright: ignore[reportInvalidTypeForm]
+        name="Max Columns",
+        default=0,
+        min=0,
+        max=12,
+        description="Most thumbnail columns to show. 0: automatic, as many as fit the panel width",
+        update=lambda self, context: jobs.redraw(),
+    )
     hover_preview: BoolProperty(  # pyright: ignore[reportInvalidTypeForm]
         name="Hover Preview",
         default=True,
@@ -860,6 +869,7 @@ class QuixlendPreferences(bpy.types.AddonPreferences):
         layout.prop(self, "library")
         layout.prop(self, "resolution")
         layout.prop(self, "fetch_sizes")
+        layout.prop(self, "max_columns")
         layout.prop(self, "hover_preview")
         row = layout.row()
         row.enabled = self.hover_preview
@@ -882,6 +892,7 @@ class QUIXLEND_PT_settings(bpy.types.Panel):
         layout.prop(prefs(), "library")
         layout.prop(prefs(), "resolution")
         layout.prop(prefs(), "fetch_sizes")
+        layout.prop(prefs(), "max_columns")
         layout.prop(prefs(), "hover_preview")
         row = layout.row()
         row.enabled = prefs().hover_preview
