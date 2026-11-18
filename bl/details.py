@@ -51,11 +51,9 @@ class QUIXLEND_OT_details(bpy.types.Operator):
         self.info = api.asset_info(asset) if asset else [("Details unavailable", "")]
         self.size = download_size(self.asset_id, fetch=False)
         sizes = state.resolutions.get(self.asset_id, {}) if self.asset_id in state.local else {}
-        built = state.built.get(self.asset_id)
-        self.have = [  # one line per downloaded resolution: "2K (473 MB)", the one the asset uses marked
-            f"{res // 1024}K ({n / 1e6:,.0f} MB)" + (" - in use" if res == built and len(sizes) > 1 else "")
-            for res, n in sorted(sizes.items())
-        ]
+        self.have = [
+            f"{res // 1024}K ({n / 1e6:,.0f} MB)" for res, n in sorted(sizes.items())
+        ]  # one line each
         return context.window_manager.invoke_popup(self, width=420)
 
     def draw(self, context: bpy.types.Context):
