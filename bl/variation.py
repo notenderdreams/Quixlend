@@ -74,7 +74,13 @@ class QUIXLEND_OT_color_variation(bpy.types.Operator):
         node = cast(bpy.types.ShaderNodeGroup, tree.nodes.new("ShaderNodeGroup"))
         node.node_tree = variation
         node.label = "Color Variation"
-        node.location = (group.location.x + group.width + 60, group.location.y)
+        gap = 40
+        node.location = (group.location.x + group.width + gap, group.location.y)
+        for other in (
+            tree.nodes
+        ):  # make room: everything to the right of the group moves over (frames carry their children)
+            if other != node and other.parent is None and other.location.x >= group.location.x + group.width:
+                other.location.x += node.width + gap
 
         feeds = group.inputs["Vector"].links
         coords = cast(bpy.types.NodeSocket | None, feeds[0].from_socket if feeds else None)
