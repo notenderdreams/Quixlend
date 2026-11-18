@@ -70,9 +70,15 @@ def resolution_of(paths) -> int | None:
     return max(sizes, default=None)
 
 
-def stale_maps(paths, resolution) -> list:
-    """Texture files of a resolution other than `resolution`: what a re-download leaves behind."""
-    return [p for p in paths if (m := _RES.search(Path(p).name)) and int(m.group(1)) * 1024 != resolution]
+def resolutions_of(paths) -> set[int]:
+    """Texture sizes in pixels found in file names; previews and billboards are not the asset's own maps."""
+    return {
+        int(m.group(1)) * 1024
+        for p in paths
+        if (m := _RES.search(Path(p).name))
+        and not {"preview", "billboards"} & {s.lower() for s in Path(p).parts}
+        and "preview" not in Path(p).name.lower()
+    }
 
 
 def asset_dir(library, asset) -> Path:

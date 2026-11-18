@@ -526,6 +526,10 @@ class Resolutions(unittest.TestCase):
     def test_no_token_means_unknown(self):
         self.assertIsNone(download.resolution_of([Path("a/x_LOD0.fbx"), Path("a/_Thumb.jpg")]))
 
-    def test_stale_files_are_maps_of_another_resolution(self):
+    def test_every_downloaded_resolution_is_listed(self):
         paths = [Path("x_1K_Albedo.jpg"), Path("x_4K_Albedo.jpg"), Path("x_LOD0.fbx"), Path("x.blend")]
-        self.assertEqual(download.stale_maps(paths, 4096), [Path("x_1K_Albedo.jpg")])
+        self.assertEqual(download.resolutions_of(paths), {1024, 4096})
+
+    def test_previews_and_billboards_are_not_resolutions(self):
+        paths = [Path("x_2K_Albedo.jpg"), Path("x_8K_Preview.jpg"), Path("Billboards/x_4K_Albedo.png")]
+        self.assertEqual(download.resolutions_of(paths), {2048})

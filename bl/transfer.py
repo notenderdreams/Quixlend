@@ -12,7 +12,7 @@ from bpy.props import BoolProperty, StringProperty
 
 from ..core import api, download
 from . import jobs
-from .library import measure_library, refresh_asset_browsers
+from .library import have_resolution, measure_library, refresh_asset_browsers
 from .placement import reload_templates
 from .store import HOME, Result, client, library, prefs, state
 
@@ -96,31 +96,6 @@ class QUIXLEND_OT_download(bpy.types.Operator):
             )
             return dest, download.resolution_of(files)
 
-        def build(dest, res):
-            thumb = HOME / "thumbs" / f"{asset_id}.jpg"  # Quixel's own catalog thumbnail
-            if thumb.exists():
-                shutil.copyfile(thumb, dest / "_Thumb.jpg")
-            proc = subprocess.run(
-                [
-                    blender,
-                    "-b",
-                    "--factory-startup",
-                    "--python",
-                    BUILD_SCRIPT,
-                    "--",
-                    str(dest),
-                    str(root),
-                    *([str(res)] if res else []),
-                ],
-                capture_output=True,
-                text=True,
-            )
-            if "QUIXLEND_BUILT" not in proc.stdout:
-                raise RuntimeError((proc.stderr or proc.stdout).strip().splitlines()[-1])
-            if res:  # the new build no longer needs the textures of the resolution it replaces
-                for old in download.stale_maps([p for p in dest.rglob("*") if p.is_file()], res):
-                    old.unlink(missing_ok=True)
-
         def settle(error):
             state.progress.pop(asset_id, None)
             state.speed.pop(asset_id, None)
@@ -149,6 +124,8 @@ class QUIXLEND_OT_download(bpy.types.Operator):
                     )
 
         def run(finished):
+            got = []  # resolution of the files just fetched
+
             def fetched(result, error):
                 try:
                     state.cancel.pop(asset_id, None)  # nothing left to cancel
@@ -158,12 +135,16 @@ class QUIXLEND_OT_download(bpy.types.Operator):
                         settle(error)
                         return
                     state.building.add(asset_id)
-                    jobs.run(lambda: build(*result), built)
+                    dest, res = result
+                    got.append(res)
+                    jobs.run(lambda: build_asset(asset_id, dest, res, root, blender), built)
                 finally:
                     finished()  # network part over: the next queued download starts while this one builds
 
             def built(_, error):
                 state.building.discard(asset_id)
+                if not error and got and got[0]:
+                    have_resolution(asset_id, got[0])
                 settle(error)
 
             try:
@@ -176,6 +157,44 @@ class QUIXLEND_OT_download(bpy.types.Operator):
         state.queue.add(asset_id, run)
         jobs.redraw()  # show Queued/progress now, not on the next mouse move
         return {"FINISHED"}
+
+
+def build_asset(asset_id, dest, res, root, blender):
+    """Build the asset's .blend from the files in `dest`, using the textures of size `res`. Runs on a worker thread."""
+    thumb = HOME / "thumbs" / f"{asset_id}.jpg"  # Quixel's own catalog thumbnail
+    if thumb.exists():
+        shutil.copyfile(thumb, dest / "_Thumb.jpg")
+    proc = subprocess.run(
+        [blender, "-b", "--factory-startup", "--python", BUILD_SCRIPT, "--", str(dest), str(root)]
+        + ([str(res)] if res else []),
+        capture_output=True,
+        text=True,
+    )
+    if "QUIXLEND_BUILT" not in proc.stdout:
+        raise RuntimeError((proc.stderr or proc.stdout).strip().splitlines()[-1])
+
+
+def switch_resolution(asset_id, res, then):
+    """Rebuild a downloaded asset to use the textures of `res`, which are already on disk; then() runs when done."""
+    dest = next((library() / "Quixlend").glob(f"*/{asset_id}"), None)
+    if dest is None:
+        state.errors[asset_id] = "Asset folder is missing; download it again"
+        return
+    state.building.add(asset_id)
+    root, blender = library(), bpy.app.binary_path
+    jobs.redraw()
+
+    def done(_, error):
+        state.building.discard(asset_id)
+        if error:
+            state.errors[asset_id] = download.reason(error)
+            jobs.redraw()
+            return
+        have_resolution(asset_id, res)
+        reload_templates(asset_id)
+        then()
+
+    jobs.run(lambda: build_asset(asset_id, dest, res, root, blender), done)
 
 
 def cancel_download(asset_id):

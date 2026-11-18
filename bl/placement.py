@@ -6,14 +6,7 @@ import bpy
 import bpy.utils.previews
 from bpy.props import StringProperty
 
-from ..core import download
 from .store import Result, library
-
-
-def local_resolution(asset_id) -> int | None:
-    """Texture size in pixels of a downloaded asset, read from its file names."""
-    folder = next((library() / "Quixlend").glob(f"*/{asset_id}"), None)
-    return download.resolution_of(p for p in folder.rglob("*") if p.is_file()) if folder else None
 
 
 def load_templates(asset_id):

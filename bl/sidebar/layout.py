@@ -79,29 +79,33 @@ def unavailable(asset_id):
 
 
 def buttons(m, hit, x, y):
-    """(main, res) button rects (x, y, w, h); res is None once downloaded or while downloading."""
-    pad = 4 * gfx.scale()
+    """(main, res, extra) button rects (x, y, w, h), None where absent. `res` is the resolution dropdown, or the
+    cancel / buy button on a card that is downloading / not in the library; `extra` is the copy icon of a downloaded
+    surface."""
+    s, pad, asset_id = gfx.scale(), 4 * gfx.scale(), hit["id"]
     bx, by, bh = x + pad, y - m["label"] + pad, m["label"] - 2 * pad
     st = state
-    if hit["id"] in st.cancel:  # downloading: the second button cancels
-        cancel_w = 24 * gfx.scale()
-        return (bx, by, m["card"] - 3 * pad - cancel_w, bh), (
-            bx + m["card"] - 2 * pad - cancel_w,
-            by,
-            cancel_w,
-            bh,
-        )
-    if hit["id"] in st.local and hit.get("type") in ("surface", "atlas"):  # Apply + copy-node-group icon
-        copy_w = 24 * gfx.scale()
-        return (bx, by, m["card"] - 3 * pad - copy_w, bh), (bx + m["card"] - 2 * pad - copy_w, by, copy_w, bh)
-    if unavailable(hit["id"]):  # the second button opens the page where it can be bought
-        buy_w = 24 * gfx.scale()
-        return (bx, by, m["card"] - 3 * pad - buy_w, bh), (bx + m["card"] - 2 * pad - buy_w, by, buy_w, bh)
-    if hit["id"] in st.local or hit["id"] in st.progress:
-        return (bx, by, m["card"] - 2 * pad, bh), None
-    res_w = 46 * gfx.scale()
-    main_w = m["card"] - 3 * pad - res_w
-    return (bx, by, main_w, bh), (bx + main_w + pad, by, res_w, bh)
+    if asset_id in st.cancel or unavailable(asset_id):  # cancel / open-in-browser
+        widths = [24 * s]
+    elif asset_id in st.building or asset_id in st.working or asset_id in st.progress:
+        widths = []  # busy: one wide button with the status
+    elif asset_id in st.local and hit.get("type") in (
+        "surface",
+        "atlas",
+    ):  # resolution + copy-node-group icon
+        widths = [46 * s, 24 * s]
+    else:
+        widths = [46 * s]
+    rects, right = [], bx + m["card"] - 2 * pad
+    for w in reversed(widths):
+        right -= w
+        rects.append((right, by, w, bh))
+        right -= pad
+    rects.reverse()
+    main = (bx, by, right - bx, bh)
+    res = rects[0] if rects else None
+    extra = rects[1] if len(rects) > 1 else None
+    return main, res, extra
 
 
 def _inside(rect, px, py):
@@ -113,9 +117,12 @@ def zone_at(region, px, py) -> tuple[dict[str, Any] | None, str | None]:
     m, items = cells(region)
     for hit, cx, cy in items:
         if cx <= px <= cx + m["card"] and cy - m["label"] <= py <= cy + m["card"]:
-            main, res = buttons(m, hit, cx, cy)
-            second = "copy" if hit["id"] in state.local else "buy" if unavailable(hit["id"]) else "res"
-            return hit, "main" if _inside(main, px, py) else second if _inside(res, px, py) else None
+            main, res, extra = buttons(m, hit, cx, cy)
+            if _inside(main, px, py):
+                return hit, "main"
+            if _inside(res, px, py):
+                return hit, "buy" if unavailable(hit["id"]) else "res"
+            return hit, "copy" if _inside(extra, px, py) else None
     return None, None
 
 

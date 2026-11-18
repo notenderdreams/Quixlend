@@ -12,6 +12,7 @@ import gpu
 from gpu_extras.batch import batch_for_shader
 
 from .. import jobs
+from ..library import has_selected
 from ..search import start_search, thumb_image
 from ..settings import res_label
 from ..store import state
@@ -65,6 +66,8 @@ def _main_label(asset_id, hit):
     if asset_id in st.progress:
         return f"{int(st.progress[asset_id] * 100)}%"
     if asset_id in st.local:
+        if not has_selected(asset_id):
+            return "Download"  # downloaded, but not at the chosen resolution
         return "Apply" if hit.get("type") in ("surface", "atlas") else "Import"
     if asset_id in st.errors:
         return "Retry"
@@ -129,6 +132,18 @@ def _draw_cancel(rect, fill, text, hovered):
             (cx + a, cy + sign * a + t),
         )
         batch_for_shader(shader, "TRIS", {"pos": pts}).draw(shader)
+
+
+def _draw_dropdown(rect, label, colors, hovered):
+    """Button showing `label` with a down arrow on the right."""
+    s = gfx.scale()
+    _draw_button(rect, label, colors["button"], colors["button_text"], hovered, colors, dropdown=True)
+    ax, ay, a = rect[0] + rect[2] - 9 * s, rect[1] + rect[3] / 2, 2.5 * s
+    shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+    shader.uniform_float("color", colors["button_text"])
+    batch_for_shader(
+        shader, "TRIS", {"pos": ((ax - a, ay + a * 0.6), (ax + a, ay + a * 0.6), (ax, ay - a * 0.8))}
+    ).draw(shader)
 
 
 def _draw_external(rect, fill, text, hovered):
@@ -272,8 +287,7 @@ def draw_grid():
             (1, 1, 1, 1) if over else (0.8, 0.8, 0.8, 1),
             card - 12 * s,
         )
-        main, res = buttons(m, hit, x, y)
-        _local = asset_id in state.local
+        main, res, extra = buttons(m, hit, x, y)
         busy = asset_id in state.progress or asset_id in state.working
         label = _main_label(asset_id, hit)
         hovered = zone == "main" and not busy and not unavailable(asset_id)
@@ -291,30 +305,16 @@ def draw_grid():
                 colors,
                 _progress_value(asset_id),
             )
-        if res and _local and ticked(asset_id, "copy"):
-            _draw_tick(res, colors["button"], colors["button_text"])
-        elif res and _local:
-            _draw_copy(res, colors["button"], colors["button_text"], zone == "copy")
-        elif res and unavailable(asset_id):
+        if extra and ticked(asset_id, "copy"):
+            _draw_tick(extra, colors["button"], colors["button_text"])
+        elif extra:
+            _draw_copy(extra, colors["button"], colors["button_text"], zone == "copy")
+        if res and unavailable(asset_id):
             _draw_external(res, colors["button"], colors["button_text"], zone == "buy")
         elif res and asset_id in state.cancel:
             _draw_cancel(res, colors["button"], colors["button_text"], zone == "res")
         elif res:
-            _draw_button(
-                res,
-                res_label(),
-                colors["button"],
-                colors["button_text"],
-                zone == "res",
-                colors,
-                dropdown=True,
-            )
-            ax, ay, a = res[0] + res[2] - 9 * s, res[1] + res[3] / 2, 2.5 * s  # dropdown arrow
-            shader = gpu.shader.from_builtin("UNIFORM_COLOR")
-            shader.uniform_float("color", colors["button_text"])
-            batch_for_shader(
-                shader, "TRIS", {"pos": ((ax - a, ay + a * 0.6), (ax + a, ay + a * 0.6), (ax, ay - a * 0.8))}
-            ).draw(shader)
+            _draw_dropdown(res, res_label(), colors, zone == "res")
     gpu.state.blend_set("NONE")
     st = state
     if items and not st.loading and st.page + 1 < st.pages and items[-1][2] + m["card"] >= 0:

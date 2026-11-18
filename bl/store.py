@@ -110,6 +110,10 @@ class state:
     loading = False  # a search/page fetch is in flight
     owned: set[str] | None = None  # set of asset ids, None until fetched
     local: set[str] = set()  # ids already built into the library
+    resolutions: dict[
+        str, dict[int, int]
+    ] = {}  # id -> {texture size in pixels: bytes on disk}, downloaded assets
+    built: dict[str, int] = {}  # id -> the size its .blend currently uses
     library_bytes: int | None = None  # disk used by downloaded assets, None until measured
     progress: dict[str, float] = {}  # id -> 0..1 while downloading
     speed: dict[

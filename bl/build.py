@@ -345,6 +345,10 @@ def build(folder, library, res=None):
             data.tags.new(str(tag))
         set_preview(asset, folder)
 
+    sizes = [int(m.group(1)) * 1024 for p in maps.values() if (m := MAP_RE.search(p.name)) and m.group(1)]
+    (folder / "_built.json").write_text(
+        json.dumps({"res": max(sizes, default=None)})
+    )  # which resolution it uses
     blend = folder / f"{asset_id}.blend"
     bpy.data.libraries.write(str(blend), set(assets), path_remap="RELATIVE", fake_user=True, compress=True)
     print(f"QUIXLEND_BUILT {blend}")

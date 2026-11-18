@@ -6,10 +6,9 @@ from bpy.props import StringProperty
 
 from ..core import api
 from . import jobs
-from .placement import local_resolution
 from .search import big_preview
 from .settings import res_label
-from .store import Result, big, client, layout_of, prefs, state
+from .store import Result, big, client, layout_of, state
 from .transfer import download_size
 
 
@@ -51,7 +50,12 @@ class QUIXLEND_OT_details(bpy.types.Operator):
         asset = state.assets.get(self.asset_id)
         self.info = api.asset_info(asset) if asset else [("Details unavailable", "")]
         self.size = download_size(self.asset_id, fetch=False)
-        self.have = local_resolution(self.asset_id) if self.asset_id in state.local else None
+        sizes = state.resolutions.get(self.asset_id, {}) if self.asset_id in state.local else {}
+        built = state.built.get(self.asset_id)
+        self.have = [  # one line per downloaded resolution: "2K (473 MB)", the one the asset uses marked
+            f"{res // 1024}K ({n / 1e6:,.0f} MB)" + (" - in use" if res == built and len(sizes) > 1 else "")
+            for res, n in sorted(sizes.items())
+        ]
         return context.window_manager.invoke_popup(self, width=420)
 
     def draw(self, context: bpy.types.Context):
@@ -61,22 +65,13 @@ class QUIXLEND_OT_details(bpy.types.Operator):
         layout.label(text=self.hit["name"])
         col = layout.column(align=True)
         rows = list(self.info)
+        rows[:0] = [("Downloaded" if i == 0 else "", line) for i, line in enumerate(self.have)]
         if self.size:
             rows.insert(0, ("Download size", f"{self.size / 1e6:,.0f} MB at {res_label()}"))
         for key, value in rows:
             row = col.split(factor=0.3)
             row.label(text=key)
             row.label(text=value)
-        if self.have:
-            row = layout.row()
-            row.label(text=f"Downloaded at {self.have // 1024}K")
-            again = row.row()
-            again.enabled = self.have != int(prefs().resolution)
-            op = again.operator(
-                "quixlend.download", text=f"Re-download at {res_label()}", icon="FILE_REFRESH"
-            )
-            assert op is not None
-            op.asset_id, op.replace = self.asset_id, True  # pyright: ignore[reportAttributeAccessIssue]
 
     def execute(self, context: bpy.types.Context) -> Result:
         return {"FINISHED"}

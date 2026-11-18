@@ -11,10 +11,11 @@ from mathutils.geometry import intersect_line_plane
 
 from ...core import api
 from ..details import open_details
+from ..library import built_at_selected, has_selected
 from ..placement import place
 from ..settings import draw_res_menu
 from ..store import Result, prefs, state
-from ..transfer import cancel_download
+from ..transfer import cancel_download, switch_resolution
 from . import gfx
 from .interact import flash, pointer
 from .layout import active, zone_at
@@ -100,7 +101,9 @@ class QUIXLEND_OT_card(bpy.types.Operator):
             elif self.zone == "res":
                 context.window_manager.popup_menu(draw_res_menu, title="Texture Resolution")
             elif self.zone == "main":
-                if asset_id in st.local:
+                if asset_id in st.local and not has_selected(asset_id):
+                    bpy.ops.quixlend.download(asset_id=asset_id, replace=True)  # pyright: ignore[reportAttributeAccessIssue]
+                elif asset_id in st.local:
                     self.import_at_cursor(context)
                 elif asset_id in st.working:
                     pass  # already applying
@@ -156,8 +159,6 @@ class QUIXLEND_OT_card(bpy.types.Operator):
         """Run place after a redraw: it blocks the main thread, so show "Applying" first."""
         hit, window, area = self.hit, context.window, self.area
         asset_id = hit["id"]
-        state.working[asset_id] = "Applying" if hit.get("type") in ("surface", "atlas") else "Importing"
-        area.tag_redraw()
 
         def run():
             region = next(r for r in area.regions if r.type == "WINDOW")
@@ -176,7 +177,15 @@ class QUIXLEND_OT_card(bpy.types.Operator):
                 flash(asset_id, "main", area)
             area.tag_redraw()
 
-        bpy.app.timers.register(run, first_interval=0.05)
+        def start():
+            state.working[asset_id] = "Applying" if hit.get("type") in ("surface", "atlas") else "Importing"
+            area.tag_redraw()
+            bpy.app.timers.register(run, first_interval=0.05)
+
+        if built_at_selected(asset_id):
+            start()
+        else:  # the textures of the chosen resolution are on disk but the asset still uses another: rebuild first
+            switch_resolution(asset_id, int(prefs().resolution), start)
 
     def import_at_cursor(self, context):
         """Import at the 3D cursor (materials go on the selected objects)."""
