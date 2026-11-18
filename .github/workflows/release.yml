@@ -43,10 +43,11 @@ jobs:
           curl -fsSL "https://download.blender.org/release/Blender${BLENDER_VERSION%.*}/blender-${BLENDER_VERSION}-linux-x64.tar.xz" \
             | tar -xJ -C ~/blender --strip-components=1
 
+      - name: Add Blender to PATH
+        run: echo "$HOME/blender" >> "$GITHUB_PATH"  # applies to later steps only
+
       - name: Build extension + static repository
-        run: |
-          echo "$HOME/blender" >> "$GITHUB_PATH"
-          just release
+        run: just release
 
       - name: Show zip contents
         run: unzip -l dist/*.zip
