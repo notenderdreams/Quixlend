@@ -12,7 +12,8 @@ zip_name = os.path.basename(glob.glob("dist/*.zip")[0])
 base = f"https://github.com/{repo}/releases"
 # `latest` so Blender keeps seeing new versions after the first install.
 index = quote(f"{base}/latest/download/index.json", safe="")
-dnd = f"{base}/download/{tag}/{zip_name}?repository={index}&blender_version_min={m['blender_version_min']}"
+# Blender matches the dropped URL against the index entry, so it must be the same `latest` URL.
+dnd = f"{base}/latest/download/{zip_name}?repository={index}&blender_version_min={m['blender_version_min']}"
 
 print(f"""## Install
 
