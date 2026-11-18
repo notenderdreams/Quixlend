@@ -31,3 +31,9 @@ clean:
 setup:
     uv venv .venv
     uv pip install --python .venv fake-bpy-module numpy
+
+# build extension zip + static-repo index.json into dist/ (needs `blender` on PATH)
+release:
+    rm -rf dist && mkdir dist
+    blender --factory-startup --command extension build --source-dir . --output-dir dist
+    blender --factory-startup --command extension server-generate --repo-dir dist

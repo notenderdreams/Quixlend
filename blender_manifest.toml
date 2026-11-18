@@ -12,3 +12,20 @@ license = ["SPDX:MIT"]
 [permissions]
 network = "Sign in to Quixel, search the catalog, download owned assets"
 files = "Write downloaded assets into the Megascans library folder"
+
+[build]
+# Everything not listed here ships in the zip. Keep dev-only files out.
+paths_exclude_pattern = [
+  "__pycache__/",
+  "/.*",
+  "*.blend1",
+  "/tests/",
+  "/docs/",
+  "/dist/",
+  "/justfile",
+  "/pyproject.toml",
+  "/pyrightconfig.json",
+  "/AGENTS.md",
+  "/uv.lock",
+  "/assets/quixel.svg",
+]
