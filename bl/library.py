@@ -7,7 +7,7 @@ import bpy
 import bpy.utils.previews
 
 from ..core import download
-from . import jobs
+from . import catalog, jobs
 from .store import HOME, client, library, prefs, state
 
 
@@ -42,6 +42,7 @@ def _scan(root):
 def measure_library():
     """Refresh disk use and which texture sizes each downloaded asset has, off the main thread."""
     root = library() / "Quixlend"
+    catalog.refresh()  # the offline search index follows the same disk changes
 
     def done(result, error):
         if error:

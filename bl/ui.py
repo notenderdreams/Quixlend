@@ -6,10 +6,10 @@ from typing import cast
 import bpy
 import bpy.utils.previews
 
-from . import search, store
+from . import catalog, search, store
 from .account import QUIXLEND_OT_login, QUIXLEND_OT_login_open, QUIXLEND_OT_logout
 from .details import QUIXLEND_OT_delete_resolution, QUIXLEND_OT_details
-from .library import ensure_asset_library, load_owned
+from .library import ensure_asset_library, load_owned, scan_local
 from .placement import QUIXLEND_OT_copy_group
 from .search import QUIXLEND_OT_search, load_categories, start_search
 from .settings import QUIXLEND_OT_clean, QUIXLEND_PT_settings, QuixlendPreferences
@@ -33,6 +33,8 @@ CLASSES = (
 
 def _startup():
     ensure_asset_library()
+    catalog.load()
+    scan_local()  # once here and after each download/delete, not on every search
     if session.logged_in:
         load_owned()
         load_categories(wm_of(bpy.context).quixlend_type)

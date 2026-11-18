@@ -110,6 +110,7 @@ class state:
     loading = False  # a search/page fetch is in flight
     owned: set[str] | None = None  # set of asset ids, None until fetched
     local: set[str] = set()  # ids already built into the library
+    catalog: dict[str, dict[str, Any]] = {}  # id -> searchable record of a downloaded asset (bl/catalog.py)
     resolutions: dict[
         str, dict[int, int]
     ] = {}  # id -> {texture size in pixels: bytes on disk}, downloaded assets

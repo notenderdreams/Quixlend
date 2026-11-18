@@ -7,7 +7,7 @@ import bpy.utils.previews
 from bpy.props import IntProperty, StringProperty
 
 from ..core import api, download
-from . import jobs
+from . import catalog, jobs
 from .library import refresh_asset_browsers, scan_local
 from .search import big_preview
 from .settings import res_label
@@ -24,15 +24,18 @@ def open_details(asset_id, window, area):
     hit = next(h for h in state.hits if h["id"] == asset_id)
 
     def work():
-        path = big_preview(hit)
-        return path, state.assets.get(asset_id) or client.asset(asset_id)
+        try:
+            path = big_preview(hit)
+        except Exception:  # offline and no local copy: the details can still come from disk
+            path = None
+        if not (state.assets.get(asset_id) or catalog.meta(asset_id)):
+            state.assets[asset_id] = client.asset(asset_id)  # not downloaded: ask Quixel
+        return path
 
-    def done(result, error):
+    def done(path, error):
         state.opening = None
-        if not error:
-            path, state.assets[asset_id] = result
-            if not big().get(asset_id):
-                big().load(asset_id, str(path), "IMAGE")
+        if path and not error and not big().get(asset_id):
+            big().load(asset_id, str(path), "IMAGE")
         region = next(r for r in area.regions if r.type == "WINDOW")
         with bpy.context.temp_override(window=window, area=area, region=region):
             bpy.ops.quixlend.details("INVOKE_DEFAULT", asset_id=asset_id)  # pyright: ignore[reportAttributeAccessIssue]
@@ -50,7 +53,7 @@ class QUIXLEND_OT_details(bpy.types.Operator):
         self.hit = next(h for h in state.hits if h["id"] == self.asset_id)
         preview = big().get(self.asset_id)
         self.icon = preview.icon_id if preview else 0
-        asset = state.assets.get(self.asset_id)
+        asset = state.assets.get(self.asset_id) or catalog.meta(self.asset_id)
         self.info = api.asset_info(asset) if asset else [("Details unavailable", "")]
         self.size = download_size(self.asset_id, fetch=False)
         sizes = state.resolutions.get(self.asset_id, {}) if self.asset_id in state.local else {}

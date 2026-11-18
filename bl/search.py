@@ -1,5 +1,6 @@
 """Catalog search: thumbnails, result pages, categories and the search properties on the window manager."""
 
+import math
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -9,13 +10,14 @@ import bpy.utils.previews
 from bpy.props import BoolProperty, EnumProperty, StringProperty
 
 from ..core import api, http
-from . import jobs
-from .library import scan_local
+from . import catalog, jobs
 from .store import HOME, PER_PAGE, TYPES, Result, state, wm_of
 
 
 def big_preview(hit):
-    """Path of the large preview image, downloaded once."""
+    """Path of the large preview image: the copy in the asset folder, else downloaded once."""
+    if hit.get("big_path") and Path(hit["big_path"]).exists():
+        return Path(hit["big_path"])
     path = HOME / "thumbs" / f"{hit['id']}_big.jpg"
     if not path.exists():
         req = urllib.request.Request(hit["big"], headers={"User-Agent": http.UA})
@@ -50,6 +52,17 @@ def thumb_image(hit):
     return image
 
 
+def _show(hits, page, pages, append):
+    """Make `hits` the result cards: replace the current ones, or add to them when `append`."""
+    if not append:
+        for old in state.hits:
+            if img := bpy.data.images.get(f".quixlend_{old['id']}"):
+                bpy.data.images.remove(img)
+        state.hits = []
+    state.hits.extend(hits)
+    state.page, state.pages = page, pages
+
+
 def start_search(page=0, append=False):
     """Fetch a result page. Results of a search superseded by a newer one are dropped."""
     wm = wm_of(bpy.context)
@@ -57,10 +70,16 @@ def start_search(page=0, append=False):
     seq = state.seq
     query, asset_type = wm.quixlend_query, wm.quixlend_type
     category = wm.quixlend_category if asset_type != "ALL" and wm.quixlend_category != "ALL" else None
-    ids = sorted(state.local) if wm.quixlend_downloaded else None
-    if wm.quixlend_downloaded and not ids:  # an empty id list would mean "no filter"
-        state.hits, state.page, state.pages = [], 0, 1
-        state.status, state.loading = "Nothing downloaded yet", False
+    if wm.quixlend_downloaded:  # the library on disk: no network, no thread
+        if not state.local:
+            state.hits, state.page, state.pages = [], 0, 1
+            state.status, state.loading = "Nothing downloaded yet", False
+            return
+        found = catalog.find(query, None if asset_type == "ALL" else asset_type, category)
+        chunk = found[page * PER_PAGE : (page + 1) * PER_PAGE]
+        state.loading = False
+        _show([catalog.hit(r) for r in chunk], page, max(1, math.ceil(len(found) / PER_PAGE)), append)
+        state.status = f"{len(found)} downloaded" if found else "No results"
         return
     state.status = "Searching…"
     state.loading = True
@@ -68,7 +87,7 @@ def start_search(page=0, append=False):
     def work():
         def attempt():
             res = api.search(
-                query, page, PER_PAGE, None if asset_type == "ALL" else asset_type, ids, category
+                query, page, PER_PAGE, None if asset_type == "ALL" else asset_type, None, category
             )
             with ThreadPoolExecutor(8) as pool:
                 thumbs = list(pool.map(_thumb, res["hits"]))
@@ -86,26 +105,23 @@ def start_search(page=0, append=False):
         state.loading = False
         if error:
             state.status = f"Search failed: {error}"[:120]
+            if http.transient(error) and not append and state.local:  # offline: show what is on disk
+                wm.quixlend_downloaded = True  # runs the search again, now local
+                state.status = f"Offline · {state.status}"
             return
         res, thumbs = result
-        if not append:
-            for old in state.hits:
-                if img := bpy.data.images.get(f".quixlend_{old['id']}"):
-                    bpy.data.images.remove(img)
-            state.hits = []
-        for hit, path in zip(res["hits"], thumbs):
-            state.hits.append(
-                {
-                    "id": hit["id"],
-                    "name": hit["name"],
-                    "type": hit.get("type"),
-                    "big": hit["previews"]["images"].get("preview") or hit["previews"]["images"]["thumb"],
-                    "path": str(path),
-                }
-            )
-        state.page, state.pages = page, res["nbPages"]
+        hits = [
+            {
+                "id": hit["id"],
+                "name": hit["name"],
+                "type": hit.get("type"),
+                "big": hit["previews"]["images"].get("preview") or hit["previews"]["images"]["thumb"],
+                "path": str(path),
+            }
+            for hit, path in zip(res["hits"], thumbs)
+        ]
+        _show(hits, page, res["nbPages"], append)
         state.status = f"{res['nbHits']} assets" if state.hits else "No results"
-        scan_local()
 
     jobs.run(work, done)
 
