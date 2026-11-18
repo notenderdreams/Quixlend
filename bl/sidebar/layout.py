@@ -12,6 +12,7 @@ from . import gfx
 CATEGORY = "Quixlend"
 
 
+DROPDOWN, DROPDOWN_COMPACT, MAIN_MIN = 46, 30, 64  # button widths in widget units; the main button's minimum
 HEADER_UNITS = 5.5  # panel header + search/filter/status rows, in widget units
 
 
@@ -89,13 +90,13 @@ def buttons(m, hit, x, y):
         widths = [24 * s]
     elif asset_id in st.building or asset_id in st.working or asset_id in st.progress:
         widths = []  # busy: one wide button with the status
-    elif asset_id in st.local and hit.get("type") in (
-        "surface",
-        "atlas",
-    ):  # resolution + copy-node-group icon
-        widths = [46 * s, 24 * s]
     else:
-        widths = [46 * s]
+        surface = asset_id in st.local and hit.get("type") in ("surface", "atlas")  # also gets the copy icon
+        widths = [DROPDOWN * s, 24 * s] if surface else [DROPDOWN * s]
+        if (
+            m["card"] - 2 * pad - sum(widths) - pad * len(widths) < MAIN_MIN * s
+        ):  # too narrow: shrink the dropdown
+            widths[0] = DROPDOWN_COMPACT * s
     rects, right = [], bx + m["card"] - 2 * pad
     for w in reversed(widths):
         right -= w

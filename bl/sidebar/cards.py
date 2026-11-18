@@ -19,7 +19,7 @@ from ..store import state
 from ..transfer import download_size
 from . import gfx
 from .interact import pointer, ticked
-from .layout import active, buttons, cells, unavailable
+from .layout import DROPDOWN, DROPDOWN_COMPACT, active, buttons, cells, unavailable
 
 
 def _transfer_label(asset_id):
@@ -314,7 +314,12 @@ def draw_grid():
         elif res and asset_id in state.cancel:
             _draw_cancel(res, colors["button"], colors["button_text"], zone == "res")
         elif res:
-            _draw_dropdown(res, res_label(), colors, zone == "res")
+            label = res_label()
+            if (
+                res[2] < (DROPDOWN + DROPDOWN_COMPACT) / 2 * s
+            ):  # the compact button has room for the number only
+                label = label.removesuffix("K")
+            _draw_dropdown(res, label, colors, zone == "res")
     gpu.state.blend_set("NONE")
     st = state
     if items and not st.loading and st.page + 1 < st.pages and items[-1][2] + m["card"] >= 0:
