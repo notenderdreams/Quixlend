@@ -6,8 +6,8 @@
 
 <p align="center">
   <img alt="Blender 5.2+" src="https://img.shields.io/badge/Blender-5.2%2B-orange?logo=blender&logoColor=white">
+  <img alt="Megascans" src="https://img.shields.io/badge/-Megascans-8dc63f?labelColor=555555&logo=data:image/svg%2bxml;base64,PHN2ZyBjbGlwLXJ1bGU9ImV2ZW5vZGQiIGZpbGwtcnVsZT0iZXZlbm9kZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLW1pdGVybGltaXQ9IjIiIHZpZXdCb3g9IjExMCAzMCAzNDAgMzQwIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGZpbGw9IiNmZmYiIGQ9Im0xMS40MiAyMy41djMzbDI4LjU4IDE2LjUgMTQuMjktOC4yNSAxNC4yOSA4LjI1di0xNi41bC0xNC4yOS04LjI1LTE0LjI5IDguMjUtMTQuMjktOC4yNXYtMTYuNWwxNC4yOS04LjI1IDE0LjI5IDguMjV2MTYuNWwxNC4yOS04LjI1di0xNi41bC0yOC41OC0xNi41eiIgZmlsbC1ydWxlPSJub256ZXJvIiB0cmFuc2Zvcm09Im1hdHJpeCg0LjA5MDkxIDAgMCA0LjA5MDkxIDExNi4zNjQgMzYuMzYzNikiLz48L3N2Zz4%3D">
   <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue">
-  <img alt="Megascans" src="https://img.shields.io/badge/Megascans-1f1f1f?logo=data:image/svg%2bxml;base64,PHN2ZyBjbGlwLXJ1bGU9ImV2ZW5vZGQiIGZpbGwtcnVsZT0iZXZlbm9kZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLW1pdGVybGltaXQ9IjIiIHZpZXdCb3g9IjExMCAzMCAzNDAgMzQwIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGZpbGw9IiNmZmYiIGQ9Im0xMS40MiAyMy41djMzbDI4LjU4IDE2LjUgMTQuMjktOC4yNSAxNC4yOSA4LjI1di0xNi41bC0xNC4yOS04LjI1LTE0LjI5IDguMjUtMTQuMjktOC4yNXYtMTYuNWwxNC4yOS04LjI1IDE0LjI5IDguMjV2MTYuNWwxNC4yOS04LjI1di0xNi41bC0yOC41OC0xNi41eiIgZmlsbC1ydWxlPSJub256ZXJvIiB0cmFuc2Zvcm09Im1hdHJpeCg0LjA5MDkxIDAgMCA0LjA5MDkxIDExNi4zNjQgMzYuMzYzNikiLz48L3N2Zz4%3D">
 </p>
 
 An unofficial Blender add-on that talks directly to Quixel. It doesn't steal or bypass anything: it only lets you download the assets that are already in your own Megascans library. You still need a Quixel account.

@@ -344,7 +344,7 @@ def set_preview(datablock, folder):
 
     size = 256
     img = bpy.data.images.load(str(src))
-    w, h = img.size
+    w, h = cast("tuple[int, int]", img.size)
     fit = size / max(w, h, 1)  # keep the aspect ratio: letterbox instead of stretching to a square
     nw, nh = max(1, round(w * fit)), max(1, round(h * fit))
     img.scale(nw, nh)
