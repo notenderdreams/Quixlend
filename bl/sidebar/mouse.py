@@ -83,6 +83,7 @@ class QUIXLEND_OT_card(bpy.types.Operator):
                 asset_id in st.local and self.zone not in ("res", "copy") and moved > 6 * gfx.scale()
             ):
                 if not pointer.drag:
+                    pointer.hover = None  # the pointer leaves the card: no hover preview when the drag ends
                     pointer.drag = {"hit": self.hit, "wire": wireframe(asset_id), "loc": None}
                 pointer.drag.update(x=event.mouse_x, y=event.mouse_y)
                 if pointer.drag["wire"]:
