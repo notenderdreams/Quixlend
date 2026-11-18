@@ -12,6 +12,8 @@
 
 An unofficial Blender add-on that talks directly to Quixel. It doesn't steal or bypass anything: it only lets you download the assets that are already in your own Megascans library. You still need a Quixel account.
 
+It's tiny: **under 200 KB**, where the Bridge app is 600 MB+.
+
 <p align="center">
   <img src="docs/images/sidebar.png" alt="Quixlend sidebar in the 3D Viewport" width="720">
 </p>
@@ -55,7 +57,6 @@ Downloaded assets are added to a Megascans asset library for you, with thumbnail
 
 ### And more
 
-- **Hover preview**: rest the pointer on a card to see a large preview in the viewport.
 - **Anti-Tiling**: attach an Anti-Tiling node group to surfaces so textures don't visibly repeat (on by default, optional).
 - **Color Variation**: a node group you can add to a material from the Shader Editor panel.
 - **Tidy scenes**: optionally place each asset in its own sub-collection.
@@ -66,13 +67,9 @@ Requires Blender 5.2 or newer and a Quixel account with the assets in your libra
 
 ### Drag and drop
 
-Drag this link into the Blender window:
+**Drag this link into Blender** (adds the repository and installs Quixlend):
 
-<p align="center">
-  <a href="https://github.com/notenderdreams/Quixlend/releases/latest/download/quixlend.zip?repository=https%3A%2F%2Fgithub.com%2Fnotenderdreams%2FQuixlend%2Freleases%2Flatest%2Fdownload%2Findex.json&blender_version_min=5.2.0"><img alt="Get Add-on: drag into Blender" src="https://img.shields.io/badge/Get%20Add--on-drag%20into%20Blender-e87d0d?style=for-the-badge&logo=blender&logoColor=white"></a>
-</p>
-
-Blender adds the Quixlend repository and installs the add-on, and keeps offering new versions as they are released. (Clicking the link just downloads the zip.)
+[Quixlend: drag me into Blender](https://github.com/notenderdreams/Quixlend/releases/latest/download/quixlend.zip?repository=https%3A%2F%2Fgithub.com%2Fnotenderdreams%2FQuixlend%2Freleases%2Flatest%2Fdownload%2Findex.json&blender_version_min=5.2.0)
 
 ### Add the repository
 
