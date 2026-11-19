@@ -16,6 +16,7 @@ from .store import Result, state
 KEY = "quixlend_decal_box"  # custom property on the box: its projector node group
 HALF = 0.5  # the cube spans +-HALF in its own space, so `scale` is its size in metres
 OPACITY = "Opacity"  # custom property on the box, a slider in its panel
+ONE_SIDE = "One Side"  # custom property on the box, a toggle: show only on the side its +Z points to
 FADE = 0.6  # the decal fades out over the outer part of the box's depth: from FADE * HALF to HALF
 
 
@@ -30,6 +31,7 @@ def make_box(source, name):
     box.empty_display_type, box.empty_display_size = "CUBE", HALF
     box.scale = decal_size(source)
     box[OPACITY] = 1.0
+    box[ONE_SIDE] = False
     box.id_properties_ui(OPACITY).update(min=0.0, max=1.0, subtype="FACTOR")  # pyright: ignore[reportOptionalMemberAccess]
     box[KEY] = build_projector(box, source)
     return box
@@ -276,13 +278,13 @@ def _drive_rotation(socket, box):
         target.id, target.transform_type, target.transform_space = box, f"ROT_{'XYZ'[axis]}", "WORLD_SPACE"
 
 
-def _drive_opacity(socket, box):
-    """Keep `socket` equal to the box's Opacity property."""
+def _drive_property(socket, box, prop):
+    """Keep `socket` equal to the box's custom property `prop`."""
     driver = socket.driver_add("default_value").driver
     driver.type = "AVERAGE"
     var = driver.variables.new()
     var.type = "SINGLE_PROP"
-    var.targets[0].id, var.targets[0].data_path = box, f'["{OPACITY}"]'
+    var.targets[0].id, var.targets[0].data_path = box, f'["{prop}"]'
 
 
 def build_projector(box, source):
@@ -335,8 +337,33 @@ def build_projector(box, source):
     for socket, value in (("From Min", FADE * HALF), ("From Max", HALF), ("To Min", 1.0), ("To Max", 0.0)):
         fade.inputs[socket].default_value = value  # pyright: ignore[reportAttributeAccessIssue]
     opacity = node("ShaderNodeValue", "Opacity (from the box)")
-    _drive_opacity(opacity.outputs[0], box)
-    for factor, label in ((fade.outputs["Result"], "x Depth Fade"), (opacity.outputs[0], "x Opacity")):
+    _drive_property(opacity.outputs[0], box, OPACITY)
+    # one side: Blender turns the shading normal towards the viewer, so it points the way the box's +Z does
+    # only for a viewer on that side
+    geometry = node("ShaderNodeNewGeometry", "Surface Side")
+    axis = node("ShaderNodeVectorRotate", "Box +Z", rotation_type="EULER_XYZ")
+    axis.inputs["Vector"].default_value = (0, 0, 1)  # pyright: ignore[reportAttributeAccessIssue]
+    _drive_rotation(axis.inputs["Rotation"], box)
+    facing = node("ShaderNodeVectorMath", "Facing the Box", operation="DOT_PRODUCT")
+    links.new(geometry.outputs["Normal"], facing.inputs[0])
+    links.new(axis.outputs["Vector"], facing.inputs[1])
+    toward = node("ShaderNodeMath", "Faces +Z", operation="GREATER_THAN")
+    links.new(facing.outputs["Value"], toward.inputs[0])
+    toward.inputs[1].default_value = 0.0  # pyright: ignore[reportAttributeAccessIssue]
+    miss = node("ShaderNodeMath", "Facing - 1", operation="SUBTRACT")
+    links.new(toward.outputs["Value"], miss.inputs[0])
+    miss.inputs[1].default_value = 1.0  # pyright: ignore[reportAttributeAccessIssue]
+    toggle = node("ShaderNodeValue", "One Side (from the box)")
+    _drive_property(toggle.outputs[0], box, ONE_SIDE)
+    side = node("ShaderNodeMath", "Side Mask", operation="MULTIPLY_ADD")  # 1 - one_side * (1 - facing)
+    links.new(miss.outputs["Value"], side.inputs[0])
+    links.new(toggle.outputs[0], side.inputs[1])
+    side.inputs[2].default_value = 1.0  # pyright: ignore[reportAttributeAccessIssue]
+    for factor, label in (
+        (fade.outputs["Result"], "x Depth Fade"),
+        (opacity.outputs[0], "x Opacity"),
+        (side.outputs["Value"], "x Side"),
+    ):
         both = node("ShaderNodeMath", label, operation="MULTIPLY")
         links.new(cover, both.inputs[0])
         links.new(factor, both.inputs[1])
@@ -698,3 +725,5 @@ def draw_manager(layout, context, box):
     row.label(text=box.name, icon="OUTLINER_OB_EMPTY")
     if OPACITY in box:
         layout.prop(box, f'["{OPACITY}"]', text="Opacity", slider=True)
+    if ONE_SIDE in box:
+        layout.prop(box, f'["{ONE_SIDE}"]', text="One Side Only", toggle=True)
