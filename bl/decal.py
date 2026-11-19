@@ -83,6 +83,109 @@ def _new_group(name, inputs, outputs):
     return tree, tree.nodes.new("NodeGroupInput"), tree.nodes.new("NodeGroupOutput")
 
 
+class _Sections:
+    """Records which nodes were made for which part of a group, so `_arrange` can lay each part out as a labelled frame."""
+
+    def __init__(self, tree):
+        self.tree, self.parts, self._open = tree, [], None
+
+    def begin(self, label):
+        self.end()
+        self._open = (label, len(self.tree.nodes))
+
+    def end(self):
+        if self._open:
+            label, first = self._open
+            nodes = list(self.tree.nodes)[first:]
+            if nodes:
+                self.parts.append((label, nodes))
+            self._open = None
+
+
+def _height(node):
+    """A drawn node's height, estimated (nodes have none until they are drawn). Generous, so nodes never touch."""
+    rows = sum(1 for s in [*node.inputs, *node.outputs] if s.enabled and not s.hide)
+    extra = {  # dropdowns, checkboxes and previews that are not sockets
+        "ShaderNodeTexImage": 190,
+        "ShaderNodeTexCoord": 110,
+        "ShaderNodeMath": 80,
+        "ShaderNodeVectorMath": 80,
+        "ShaderNodeMix": 110,
+        "ShaderNodeMapRange": 130,
+        "ShaderNodeVectorRotate": 90,
+        "ShaderNodeSeparateColor": 50,
+        "ShaderNodeBsdfPrincipled": 420,
+    }
+    return 50 + 24 * rows + extra.get(node.bl_idname, 0)
+
+
+def _levels(nodes):
+    """{node: how many links it is from the start of `nodes`}, counting only links between them."""
+    inside, depth = set(nodes), {}
+
+    def level(n):
+        if n not in depth:
+            depth[n] = 0  # guards a cycle
+            before = [link.from_node for i in n.inputs for link in i.links if link.from_node in inside]
+            depth[n] = 1 + max((level(b) for b in before), default=-1)
+        return depth[n]
+
+    for n in nodes:
+        level(n)
+    return depth
+
+
+def _near_inputs(column, centre):
+    """`column` ordered by the average height of the already placed nodes feeding each one: keeps links short."""
+
+    def height(n):
+        feeds = [centre[link.from_node] for i in n.inputs for link in i.links if link.from_node in centre]
+        return -sum(feeds) / len(feeds) if feeds else 0.0
+
+    return sorted(column, key=height)  # stable: nodes with no placed input keep the order they were made in
+
+
+def _arrange(tree, gi, go, sections):
+    """Tidy layout: each part is a labelled frame; inside it, nodes sit in columns by how far they are from the
+    part's start, ordered to keep links short. Parts stack top to bottom, Group Input on the left, Output on the right."""
+    gap_x, gap_y, gap_part = 90, 40, 140
+    tints = (
+        (0.22, 0.30, 0.42),
+        (0.42, 0.32, 0.20),
+        (0.22, 0.38, 0.28),
+        (0.34, 0.25, 0.42),
+    )  # one per part, muted
+    top, right = 0.0, 0.0
+    for part, (label, nodes) in enumerate(sections):
+        for n in nodes:  # wide enough to read the label
+            n.width = max(n.width, min(260.0, 28 + 7.5 * len(n.label)))
+        depth = _levels(nodes)
+        columns: dict = {}
+        for n in nodes:
+            columns.setdefault(depth[n], []).append(n)
+        x, tallest, centre = 0.0, 0.0, {}
+        for d in sorted(columns):
+            y = top
+            for n in _near_inputs(columns[d], centre):
+                n.location = (x, y)
+                centre[n] = y - _height(n) / 2
+                y -= _height(n) + gap_y
+            tallest = max(tallest, top - y)
+            x += max(n.width for n in columns[d]) + gap_x
+        frame = tree.nodes.new("NodeFrame")
+        frame.label, frame.label_size, frame.shrink = label, 22, True
+        frame.use_custom_color, frame.color = True, tints[part % len(tints)]
+        for n in nodes:
+            n.parent = frame
+        top -= tallest + gap_part
+        right = max(right, x)
+    middle = top / 2
+    if gi:
+        gi.location = (-gi.width - gap_part, middle)
+    if go:
+        go.location = (right + gap_part - gap_x, middle)
+
+
 def _shared(name) -> bpy.types.ShaderNodeTree:
     """The Start or Merge group, made once per file."""
     found = next((g for g in bpy.data.node_groups if g.get(KEY) == name), None)
@@ -91,60 +194,74 @@ def _shared(name) -> bpy.types.ShaderNodeTree:
     if name == START:  # an empty line: nothing covered. Colour and roughness are premultiplied by coverage: 0
         tree, _, go = _new_group(name, [], LINE)
         nodes, links = tree.nodes, tree.links
-        black, rough, alpha = (
+        made = _Sections(tree)
+        made.begin("Empty Line")
+        black, rough, tilt, alpha = (
             nodes.new("ShaderNodeRGB"),
             nodes.new("ShaderNodeValue"),
+            nodes.new("ShaderNodeCombineXYZ"),
             nodes.new("ShaderNodeValue"),
+        )
+        black.label, rough.label, tilt.label, alpha.label = (
+            "No Colour",
+            "No Roughness",
+            "No Tilt",
+            "No Coverage",
         )
         black.outputs[0].default_value = (0, 0, 0, 1)  # pyright: ignore[reportAttributeAccessIssue]
         rough.outputs[0].default_value, alpha.outputs[0].default_value = 0.0, 0.0  # pyright: ignore[reportAttributeAccessIssue]
         links.new(black.outputs[0], go.inputs["Color"])
         links.new(rough.outputs[0], go.inputs["Roughness"])
-        links.new(
-            nodes.new("ShaderNodeCombineXYZ").outputs["Vector"], go.inputs["Normal"]
-        )  # a tilt: none yet
+        links.new(tilt.outputs["Vector"], go.inputs["Normal"])
         links.new(alpha.outputs[0], go.inputs["Alpha"])
+        made.end()
+        _arrange(tree, None, go, made.parts)
     else:  # takes the material's shader and the line; gives one shader: the line's surface laid over it where it covers
         tree, gi, go = _new_group(
             name, [("Shader", "NodeSocketShader"), *LINE], [("Shader", "NodeSocketShader")]
         )
         nodes, links = tree.nodes, tree.links
-        bsdf, over = nodes.new("ShaderNodeBsdfPrincipled"), nodes.new("ShaderNodeMixShader")
+        made = _Sections(tree)
+
+        def math(operation, label, kind="ShaderNodeMath"):
+            n = nodes.new(kind)
+            n.operation, n.label = operation, label  # pyright: ignore[reportAttributeAccessIssue]
+            return n
+
         # the line's colour and roughness come premultiplied by coverage (each decal is mix(below, own, a)):
         # divide it back out, or partial coverage (soft edges, opacity) would count twice
-        floor = cast(bpy.types.ShaderNodeMath, nodes.new("ShaderNodeMath"))
-        floor.operation = "MAXIMUM"
+        made.begin("Undo Premultiply")
+        floor = math("MAXIMUM", "Coverage, Never 0")
         links.new(gi.outputs["Alpha"], floor.inputs[0])
         floor.inputs[1].default_value = 1e-4  # pyright: ignore[reportAttributeAccessIssue]
-        inverse = cast(bpy.types.ShaderNodeMath, nodes.new("ShaderNodeMath"))
-        inverse.operation = "DIVIDE"
+        inverse = math("DIVIDE", "1 / Coverage")
         inverse.inputs[0].default_value = 1.0  # pyright: ignore[reportAttributeAccessIssue]
         links.new(floor.outputs[0], inverse.inputs[1])
-        color = cast(bpy.types.ShaderNodeVectorMath, nodes.new("ShaderNodeVectorMath"))
-        color.operation = "SCALE"
+        color = math("SCALE", "Colour / Coverage", "ShaderNodeVectorMath")
         links.new(gi.outputs["Color"], color.inputs[0])
         links.new(inverse.outputs[0], color.inputs["Scale"])
-        rough = cast(bpy.types.ShaderNodeMath, nodes.new("ShaderNodeMath"))
-        rough.operation = "MULTIPLY"
+        rough = math("MULTIPLY", "Roughness / Coverage")
         links.new(gi.outputs["Roughness"], rough.inputs[0])
         links.new(inverse.outputs[0], rough.inputs[1])
-        links.new(color.outputs["Vector"], bsdf.inputs["Base Color"])
-        links.new(rough.outputs[0], bsdf.inputs["Roughness"])
-        tilt = cast(bpy.types.ShaderNodeVectorMath, nodes.new("ShaderNodeVectorMath"))
-        tilt.operation = "ADD"
+        made.begin("Normal")
+        tilt = math("ADD", "Surface + Decal Tilt", "ShaderNodeVectorMath")
         links.new(nodes.new("ShaderNodeNewGeometry").outputs["Normal"], tilt.inputs[0])
         links.new(gi.outputs["Normal"], tilt.inputs[1])
-        unit = cast(bpy.types.ShaderNodeVectorMath, nodes.new("ShaderNodeVectorMath"))
-        unit.operation = "NORMALIZE"
+        unit = math("NORMALIZE", "Unit Normal", "ShaderNodeVectorMath")
         links.new(tilt.outputs["Vector"], unit.inputs[0])
+        made.begin("Shader")
+        bsdf, over = nodes.new("ShaderNodeBsdfPrincipled"), nodes.new("ShaderNodeMixShader")
+        bsdf.label, over.label = "Decal Surface", "Decal Over Material"
+        links.new(color.outputs["Vector"], bsdf.inputs["Base Color"])
+        links.new(rough.outputs[0], bsdf.inputs["Roughness"])
         links.new(unit.outputs["Vector"], bsdf.inputs["Normal"])
         links.new(gi.outputs["Alpha"], over.inputs["Fac"])
         links.new(gi.outputs["Shader"], over.inputs[1])
         links.new(bsdf.outputs["BSDF"], over.inputs[2])
         links.new(over.outputs["Shader"], go.inputs["Shader"])
+        made.end()
+        _arrange(tree, gi, go, made.parts)
     tree[KEY] = name
-    for i, n in enumerate(tree.nodes):
-        n.location = (i * 220 - 400, 0)
     return tree
 
 
@@ -180,64 +297,70 @@ def build_projector(box, source):
     tree, gi, go = _new_group(f"Decal {box.name}", LINE, LINE)
     tree[KEY] = True  # tells a decal's group from any other
     nodes, links = tree.nodes, tree.links
+    made = _Sections(tree)
 
-    def node(idname, **props):
+    def node(idname, label, **props):
         n = nodes.new(idname)
+        n.label = label
         for key, value in props.items():
             setattr(n, key, value)
         return n
 
-    coord = cast(bpy.types.ShaderNodeTexCoord, node("ShaderNodeTexCoord"))
+    # --- where the box is: 1 inside it, 0 outside, fading out along its depth, times the Opacity slider
+    made.begin("Box Mask")
+    coord = cast(bpy.types.ShaderNodeTexCoord, node("ShaderNodeTexCoord", "Box Space"))
     coord.object = box
-    absolute = node("ShaderNodeVectorMath", operation="ABSOLUTE")
+    absolute = node("ShaderNodeVectorMath", "Distance From Centre", operation="ABSOLUTE")
     links.new(coord.outputs["Object"], absolute.inputs[0])
-    inside = node("ShaderNodeSeparateXYZ")
+    inside = node("ShaderNodeSeparateXYZ", "X, Y, Z")
     links.new(absolute.outputs["Vector"], inside.inputs["Vector"])
     cover = None
-    for axis in "XY":  # inside the cube's sides when |x| and |y| are under HALF
-        cut = node("ShaderNodeMath", operation="LESS_THAN")
+    for axis, label in (
+        ("X", "Within Width"),
+        ("Y", "Within Height"),
+    ):  # inside the sides: |x|, |y| under HALF
+        cut = node("ShaderNodeMath", label, operation="LESS_THAN")
         links.new(inside.outputs[axis], cut.inputs[0])
         cut.inputs[1].default_value = HALF  # pyright: ignore[reportAttributeAccessIssue]
         if cover:
-            both = node("ShaderNodeMath", operation="MULTIPLY")
+            both = node("ShaderNodeMath", "Within Both", operation="MULTIPLY")
             links.new(cover, both.inputs[0])
             links.new(cut.outputs["Value"], both.inputs[1])
             cover = both.outputs["Value"]
         else:
             cover = cut.outputs["Value"]
     # along the depth it fades out softly instead of cutting hard where a curved surface leaves the box
-    fade = node("ShaderNodeMapRange", interpolation_type="SMOOTHSTEP")
+    fade = node("ShaderNodeMapRange", "Depth Fade", interpolation_type="SMOOTHSTEP")
     links.new(inside.outputs["Z"], fade.inputs["Value"])
     for socket, value in (("From Min", FADE * HALF), ("From Max", HALF), ("To Min", 1.0), ("To Max", 0.0)):
         fade.inputs[socket].default_value = value  # pyright: ignore[reportAttributeAccessIssue]
-    opacity = node("ShaderNodeValue")
+    opacity = node("ShaderNodeValue", "Opacity (from the box)")
     _drive_opacity(opacity.outputs[0], box)
-    for factor in (fade.outputs["Result"], opacity.outputs[0]):
-        both = node("ShaderNodeMath", operation="MULTIPLY")
+    for factor, label in ((fade.outputs["Result"], "x Depth Fade"), (opacity.outputs[0], "x Opacity")):
+        both = node("ShaderNodeMath", label, operation="MULTIPLY")
         links.new(cover, both.inputs[0])
         links.new(factor, both.inputs[1])
         cover = both.outputs["Value"]
 
-    # texture space: the box's x/y mapped onto 0..1
-    shifted = node("ShaderNodeVectorMath", operation="ADD")
+    # --- the decal's images, laid over the box's x/y mapped onto 0..1
+    made.begin("Decal Images")
+    shifted = node("ShaderNodeVectorMath", "Box to UV", operation="ADD")
     links.new(coord.outputs["Object"], shifted.inputs[0])
     shifted.inputs[1].default_value = (HALF, HALF, 0)  # pyright: ignore[reportAttributeAccessIssue]
 
-    def sample(image):
-        n = cast(bpy.types.ShaderNodeTexImage, node("ShaderNodeTexImage", image=image, extension="CLIP"))
+    def sample(image, label):
+        n = cast(
+            bpy.types.ShaderNodeTexImage, node("ShaderNodeTexImage", label, image=image, extension="CLIP")
+        )
         links.new(shifted.outputs["Vector"], n.inputs["Vector"])
         return n
 
-    colors = sample(color) if color else None
-    if colors:
-        faded = node("ShaderNodeMath", operation="MULTIPLY")
-        links.new(cover, faded.inputs[0])
-        links.new(colors.outputs["Alpha"], faded.inputs[1])
-        cover = faded.outputs["Value"]
+    colors = sample(color, "Colour + Opacity") if color else None
+    surfaces = sample(surface, "Normal + Roughness") if surface else None
 
-    def over(name, data_type, value):
+    def over(name, label, data_type, value):
         """`value` laid over what came down the line, by the coverage."""
-        blend = node("ShaderNodeMix", data_type=data_type)
+        blend = node("ShaderNodeMix", label, data_type=data_type)
         a, b, out = (6, 7, 2) if data_type == "RGBA" else (2, 3, 0)  # this data type's sockets
         links.new(cover, blend.inputs[0])
         links.new(gi.outputs[name], blend.inputs[a])
@@ -247,40 +370,48 @@ def build_projector(box, source):
             links.new(value, blend.inputs[b])
         links.new(blend.outputs[out], go.inputs[name])
 
+    # --- colour, and how much of the surface the decal covers
+    made.begin("Colour and Coverage")
     if colors:
-        over("Color", "RGBA", colors.outputs["Color"])
+        faded = node("ShaderNodeMath", "x Image Opacity", operation="MULTIPLY")
+        links.new(cover, faded.inputs[0])
+        links.new(colors.outputs["Alpha"], faded.inputs[1])
+        cover = faded.outputs["Value"]
+        over("Color", "Colour Over", "RGBA", colors.outputs["Color"])
     else:
         links.new(gi.outputs["Color"], go.inputs["Color"])
-    over("Alpha", "FLOAT", 1.0)  # coverage adds up: a + below * (1 - a)
+    over("Alpha", "Coverage Adds Up", "FLOAT", 1.0)  # coverage adds up: a + below * (1 - a)
 
-    if surface:
-        channels = node("ShaderNodeSeparateColor")
-        links.new(sample(surface).outputs["Color"], channels.inputs["Color"])
-        over("Roughness", "FLOAT", channels.outputs["Blue"])
-        # tilt the incoming normal by the map's x/y, turned into world space by the box's rotation
-        flat = node("ShaderNodeCombineXYZ")
+    # --- roughness, and the normal: its tilt, turned into world space by the box's rotation, added to what is there
+    made.begin("Roughness and Normal")
+    if surfaces:
+        channels = node("ShaderNodeSeparateColor", "Unpack Normal and Roughness")
+        links.new(surfaces.outputs["Color"], channels.inputs["Color"])
+        over("Roughness", "Roughness Over", "FLOAT", channels.outputs["Blue"])
+        flat = node("ShaderNodeCombineXYZ", "Tilt X, Y")
         links.new(channels.outputs["Red"], flat.inputs["X"])
         links.new(channels.outputs["Green"], flat.inputs["Y"])
-        tangent = node("ShaderNodeVectorMath", operation="MULTIPLY_ADD")
+        tangent = node("ShaderNodeVectorMath", "Map to -1..1", operation="MULTIPLY_ADD")
         links.new(flat.outputs["Vector"], tangent.inputs[0])
         tangent.inputs[1].default_value = (2, 2, 0)  # pyright: ignore[reportAttributeAccessIssue]
         tangent.inputs[2].default_value = (-1, -1, 0)  # pyright: ignore[reportAttributeAccessIssue]
-        turn = node("ShaderNodeVectorRotate", rotation_type="EULER_XYZ")
+        turn = node("ShaderNodeVectorRotate", "Turn With Box", rotation_type="EULER_XYZ")
         links.new(tangent.outputs["Vector"], turn.inputs["Vector"])
         _drive_rotation(turn.inputs["Rotation"], box)
-        scaled = node("ShaderNodeVectorMath", operation="SCALE")
+        scaled = node("ShaderNodeVectorMath", "x Coverage", operation="SCALE")
         links.new(turn.outputs["Vector"], scaled.inputs[0])
         links.new(cover, scaled.inputs["Scale"])
-        tilted = node("ShaderNodeVectorMath", operation="ADD")  # tilts add up; Merge turns them into a normal
+        tilted = node(
+            "ShaderNodeVectorMath", "Add to Tilt", operation="ADD"
+        )  # Merge turns the tilts into a normal
         links.new(gi.outputs["Normal"], tilted.inputs[0])
         links.new(scaled.outputs["Vector"], tilted.inputs[1])
         links.new(tilted.outputs["Vector"], go.inputs["Normal"])
     else:
         links.new(gi.outputs["Roughness"], go.inputs["Roughness"])
         links.new(gi.outputs["Normal"], go.inputs["Normal"])
-
-    for i, n in enumerate(nodes):  # laid out in rows so it is readable if opened
-        n.location = ((i % 6) * 220 - 600, -(i // 6) * 260)
+    made.end()
+    _arrange(tree, gi, go, made.parts)
     return tree
 
 
