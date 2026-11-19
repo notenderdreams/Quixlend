@@ -131,5 +131,13 @@ def hit_at(region, x, y):
     return zone_at(region, x, y)[0]
 
 
+MIN_REGION = 120  # narrower than this (widget units) the sidebar is collapsing or closed: no cards
+
+
 def active(region):
-    return region.type == "UI" and region.active_panel_category == CATEGORY and session.logged_in
+    return (
+        region.type == "UI"
+        and region.active_panel_category == CATEGORY
+        and session.logged_in
+        and region.width >= MIN_REGION * gfx.scale()
+    )
