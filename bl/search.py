@@ -63,19 +63,31 @@ def _show(hits, page, pages, append):
     state.page, state.pages = page, pages
 
 
+DECAL_CATEGORIES = ("decals", "decal")  # what Megascans calls a decal's category
+
+
+def scope(asset_type, category):
+    """(catalog type or None, category or None) to search for the sidebar's Type and Category choices."""
+    if asset_type == "decal":  # not a catalog type: decals are atlases in the decals categories
+        return "atlas", DECAL_CATEGORIES
+    return (None if asset_type == "ALL" else asset_type), (
+        category if asset_type != "ALL" and category != "ALL" else None
+    )
+
+
 def start_search(page=0, append=False):
     """Fetch a result page. Results of a search superseded by a newer one are dropped."""
     wm = wm_of(bpy.context)
     state.seq += 1
     seq = state.seq
     query, asset_type = wm.quixlend_query, wm.quixlend_type
-    category = wm.quixlend_category if asset_type != "ALL" and wm.quixlend_category != "ALL" else None
+    api_type, category = scope(asset_type, wm.quixlend_category)
     if wm.quixlend_downloaded:  # the library on disk: no network, no thread
         if not state.local:
             state.hits, state.page, state.pages = [], 0, 1
             state.status, state.loading = "Nothing downloaded yet", False
             return
-        found = catalog.find(query, None if asset_type == "ALL" else asset_type, category)
+        found = catalog.find(query, api_type, category)
         chunk = found[page * PER_PAGE : (page + 1) * PER_PAGE]
         state.loading = False
         _show([catalog.hit(r) for r in chunk], page, max(1, math.ceil(len(found) / PER_PAGE)), append)
@@ -86,9 +98,7 @@ def start_search(page=0, append=False):
 
     def work():
         def attempt():
-            res = api.search(
-                query, page, PER_PAGE, None if asset_type == "ALL" else asset_type, None, category
-            )
+            res = api.search(query, page, PER_PAGE, api_type, None, category)
             with ThreadPoolExecutor(8) as pool:
                 thumbs = list(pool.map(_thumb, res["hits"]))
             return res, thumbs
@@ -158,7 +168,9 @@ def _category_items_for(self, context):
 
 def load_categories(asset_type):
     """Fetch the categories of a type once; the dropdown fills in when they arrive."""
-    if asset_type == "ALL" or asset_type in state.categories:
+    if (
+        asset_type in ("ALL", "decal") or asset_type in state.categories
+    ):  # decals have no sub-categories to list
         return
     state.categories[asset_type] = []  # marks it as requested
 

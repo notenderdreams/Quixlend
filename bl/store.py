@@ -32,6 +32,7 @@ TYPES = [
     ("3dplant", "3D Plants", ""),
     ("surface", "Surfaces", ""),
     ("atlas", "Atlases", ""),
+    ("decal", "Decals", ""),  # Megascans keeps decals in the atlas type, category decals (see search.scope)
     ("brush", "Brushes", ""),
 ]
 

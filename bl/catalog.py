@@ -84,16 +84,16 @@ def refresh():
 
 
 def find(query, asset_type, category) -> list[dict[str, Any]]:
-    """Downloaded assets matching every word of `query`, by name."""
+    """Downloaded assets matching every word of `query`, by name. `category` is one name or several (any of them)."""
     words = query.lower().split()
-    category = category.lower() if category else None
+    wanted = {category.lower()} if isinstance(category, str) else {c.lower() for c in category or ()}
     return sorted(
         (
             r
             for r in state.catalog.values()
             if r["id"] in state.local
             and (not asset_type or r["type"] == asset_type)
-            and (not category or category in r["cats"])
+            and (not wanted or wanted & set(r["cats"]))
             and all(w in r["h"] for w in words)
         ),
         key=lambda r: r["name"].lower(),

@@ -35,13 +35,15 @@ COMPONENTS = [
 
 
 def search(query="", page=0, per_page=48, asset_type=None, ids=None, category=None):
-    """Catalog search. `ids` restricts to those asset ids; `category` to one category of the type."""
+    """Catalog search. `ids` restricts to those asset ids; `category` to a category (or a list of them) of the type."""
     body = {"query": query, "page": page, "hitsPerPage": per_page}
     filters = []
     if asset_type:
         filters.append(f'type:"{asset_type}"')
-    if category:
-        filters.append('category:"' + category.replace('"', "") + '"')
+    if category:  # one category, or several of which an asset may be in any
+        names = [category] if isinstance(category, str) else list(category)
+        clauses = ['category:"' + c.replace('"', "") + '"' for c in names]
+        filters.append(clauses[0] if len(clauses) == 1 else "(" + " OR ".join(clauses) + ")")
     if ids:
         filters.append("(" + " OR ".join(f"objectID:{i}" for i in ids) + ")")
     if filters:

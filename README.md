@@ -59,7 +59,7 @@ Downloaded assets are added to a Megascans asset library for you, with thumbnail
 
 - **Anti-Tiling**: attach an Anti-Tiling node group to surfaces so textures don't visibly repeat (on by default, optional).
 - **Color Variation**: a node group you can add to a material from the Shader Editor panel.
-- **Decals**: Megascans decals drop as a projection box (an Empty cube) at real size, facing the surface you drop it on. Move, rotate, scale or copy the box freely: the decal follows it onto any mesh it overlaps, and clears off meshes it leaves. Delete the box and its traces go too.
+- **Decals**: pick **Decals** in the type dropdown to browse only decals (online, or just the ones you have downloaded). They drop as a projection box (an Empty cube) at real size, facing the surface you drop it on. Move, rotate, scale or copy the box freely: the decal follows it onto any mesh it overlaps, and clears off meshes it leaves. Delete the box and its traces go too.
 - **Tidy scenes**: optionally place each asset in its own sub-collection.
 
 ## Installation

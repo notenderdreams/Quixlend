@@ -47,7 +47,7 @@ class QUIXLEND_PT_browser(bpy.types.Panel):
         row = layout.row(align=True)
         row.prop(wm, "quixlend_type", text="")
         cat = row.row(align=True)
-        cat.enabled = wm.quixlend_type != "ALL"
+        cat.enabled = wm.quixlend_type not in ("ALL", "decal")
         cat.prop(wm, "quixlend_category", text="")
         row.prop(wm, "quixlend_downloaded", text="", icon="DISK_DRIVE")
         row = layout.row()
