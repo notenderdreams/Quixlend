@@ -9,6 +9,7 @@ import bpy
 import bpy.utils.previews
 import gpu
 from gpu_extras.batch import batch_for_shader
+from mathutils import Matrix
 
 from .. import jobs
 from ..placement import load_templates
@@ -58,6 +59,8 @@ def draw_drag_3d():
     if not pointer.drag or not pointer.drag.get("wire") or not pointer.drag.get("loc"):
         return
     matrix = pointer.drag["wire"]["basis"].copy()
+    if rot := pointer.drag.get("rot"):  # a decal stands on the surface under the pointer
+        matrix = Matrix.LocRotScale(pointer.drag["loc"], rot, None)
     matrix.translation = pointer.drag["loc"]  # place() only overrides the location
     shader = gpu.shader.from_builtin("UNIFORM_COLOR")
     shader.uniform_float("color", (*gfx.colors()["accent"][:3], 1.0))

@@ -5,7 +5,7 @@ from typing import Any
 
 import blf
 
-from ..store import prefs, session, state
+from ..store import is_material, prefs, session, state
 from ..transfer import download_size
 from . import gfx
 
@@ -91,7 +91,7 @@ def buttons(m, hit, x, y):
     elif asset_id in st.building or asset_id in st.working or asset_id in st.progress:
         widths = []  # busy: one wide button with the status
     else:
-        surface = asset_id in st.local and hit.get("type") in ("surface", "atlas")  # also gets the copy icon
+        surface = asset_id in st.local and is_material(hit)  # also gets the copy icon
         widths = [DROPDOWN * s, 24 * s] if surface else [DROPDOWN * s]
         if (
             m["card"] - 2 * pad - sum(widths) - pad * len(widths) < MAIN_MIN * s

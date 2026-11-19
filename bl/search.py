@@ -115,6 +115,7 @@ def start_search(page=0, append=False):
                 "id": hit["id"],
                 "name": hit["name"],
                 "type": hit.get("type"),
+                "decal": hit.get("category") in ("decal", "decals"),
                 "big": hit["previews"]["images"].get("preview") or hit["previews"]["images"]["thumb"],
                 "path": str(path),
             }

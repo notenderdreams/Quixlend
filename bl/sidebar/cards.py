@@ -15,7 +15,7 @@ from .. import jobs
 from ..library import has_selected
 from ..search import start_search, thumb_image
 from ..settings import res_label
-from ..store import state
+from ..store import is_material, state
 from ..transfer import download_size
 from . import gfx
 from .interact import pointer, ticked
@@ -68,7 +68,7 @@ def _main_label(asset_id, hit):
     if asset_id in st.local:
         if not has_selected(asset_id):
             return "Download"  # downloaded, but not at the chosen resolution
-        return "Apply" if hit.get("type") in ("surface", "atlas") else "Import"
+        return "Apply" if is_material(hit) else "Import"
     if asset_id in st.errors:
         return "Retry"
     if st.owned is not None and asset_id not in st.owned:

@@ -7,6 +7,7 @@ import bpy.utils.previews
 from bpy.props import StringProperty
 
 from ..core import download
+from . import decal
 from .library import usable_resolution
 from .store import Result, library, prefs
 
@@ -28,23 +29,37 @@ def load_templates(asset_id, res=None):
         return None, None
     key = download.blend_resolution(blend.name, asset_id) or 0  # 0: a file without a size in its name
     # Reuse datablocks from an earlier placement instead of appending duplicates.
-    objects = [o for o in bpy.data.objects if _loaded(o, asset_id, key) and o.get("quixlend_source")]
-    materials = [m for m in bpy.data.materials if _loaded(m, asset_id, key)]
+    stamp = int(
+        blend.stat().st_mtime
+    )  # a rebuilt file is loaded again, not served from the copy loaded earlier
+    objects = [o for o in bpy.data.objects if _loaded(o, asset_id, key, stamp) and o.get("quixlend_source")]
+    materials = [m for m in bpy.data.materials if _loaded(m, asset_id, key, stamp)]
     if not objects and not materials:
+        for old in [
+            o for o in bpy.data.objects if o.get("quixlend_source") and _loaded(o, asset_id, key, None)
+        ]:
+            bpy.data.objects.remove(
+                old
+            )  # a template from before a rebuild: never in a scene, kept only by fake user
         with bpy.data.libraries.load(str(blend), assets_only=True) as (src, dst):  # pyright: ignore[reportGeneralTypeIssues]
             dst.objects, dst.materials = src.objects, src.materials
         objects, materials = dst.objects, dst.materials
         for block in objects + materials:
             block.asset_clear()
-            block["quixlend_id"], block["quixlend_res"] = asset_id, key
+            block["quixlend_id"], block["quixlend_res"], block["quixlend_stamp"] = asset_id, key, stamp
         for obj in objects:
             obj["quixlend_source"] = True  # pristine template, never linked to a scene
             obj.use_fake_user = True
     return objects, materials
 
 
-def _loaded(block, asset_id, res):
-    return block.get("quixlend_id") == asset_id and block.get("quixlend_res", 0) == res
+def _loaded(block, asset_id, res, stamp):
+    """`block` was loaded from this asset at this size (and, unless `stamp` is None, from this build of it)."""
+    return (
+        block.get("quixlend_id") == asset_id
+        and block.get("quixlend_res", 0) == res
+        and (stamp is None or block.get("quixlend_stamp") == stamp)
+    )
 
 
 def place(context, asset_id, location=None, target=None, pick=None, name=None):
@@ -75,11 +90,29 @@ def place(context, asset_id, location=None, target=None, pick=None, name=None):
                 collection["quixlend_id"] = asset_id
                 parent.children.link(collection)
         for source in sources:
-            obj = cast(bpy.types.Object, source.copy())
-            del obj["quixlend_source"]
+            is_decal = "quixlend_decal" in source
+            obj = (
+                decal.make_box(source, name or asset_id)
+                if is_decal
+                else cast(bpy.types.Object, source.copy())
+            )
+            if not is_decal:
+                del obj["quixlend_source"]
             collection.objects.link(obj)
             obj.location = base
             obj.location.x += x
+            if is_decal:
+                decal.orient(obj, obj.location, target)
+                context.view_layer.update()
+                full = decal.project(
+                    obj,
+                    {
+                        *decal.overlapping(obj, context),
+                        *([target.original] if target and target.type == "MESH" else []),
+                    },
+                )
+                if full:
+                    return f"Too many decals on {full[0].name}: the GPU texture limit would turn it pink"
             xs = [corner[0] for corner in source.bound_box]  # dimensions are 0 on unlinked objects
             x += (max(xs) - min(xs)) * 1.2
             obj.select_set(True)

@@ -11,11 +11,12 @@ from bpy_extras import view3d_utils
 from mathutils.geometry import intersect_line_plane
 
 from ...core import api
+from ..decal import orientation
 from ..details import open_details
-from ..library import built_at_selected, has_selected
+from ..library import built_at_selected, has_selected, stale_decal
 from ..placement import place
 from ..settings import draw_res_menu
-from ..store import Result, prefs, state
+from ..store import Result, is_material, prefs, state
 from ..transfer import build_resolution, cancel_download
 from . import gfx
 from .interact import flash, pointer
@@ -89,6 +90,8 @@ class QUIXLEND_OT_card(bpy.types.Operator):
                 if pointer.drag["wire"]:
                     found = self.locate(context, event.mouse_x, event.mouse_y)
                     pointer.drag["loc"] = found[0] if found else None
+                    if self.hit.get("decal"):
+                        pointer.drag["rot"] = orientation(*found) if found else None
                 self.area.tag_redraw()
         elif event.type == "LEFTMOUSE" and event.value == "RELEASE":
             if pointer.drag:
@@ -185,11 +188,11 @@ class QUIXLEND_OT_card(bpy.types.Operator):
             area.tag_redraw()
 
         def start():
-            state.working[asset_id] = "Applying" if hit.get("type") in ("surface", "atlas") else "Importing"
+            state.working[asset_id] = "Applying" if is_material(hit) else "Importing"
             area.tag_redraw()
             bpy.app.timers.register(run, first_interval=0.05)
 
-        if built_at_selected(asset_id):
+        if built_at_selected(asset_id) and not stale_decal(hit):
             start()
         else:  # the textures of the chosen resolution are on disk but the asset still uses another: rebuild first
             build_resolution(asset_id, int(prefs().resolution), start)

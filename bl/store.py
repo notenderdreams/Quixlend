@@ -36,6 +36,11 @@ TYPES = [
 ]
 
 
+def is_material(hit):
+    """Applied onto objects (surfaces, atlases); decals are placed as planes instead."""
+    return hit.get("type") in ("surface", "atlas") and not hit.get("decal")
+
+
 session = auth.Session(HOME / "auth.json")
 
 

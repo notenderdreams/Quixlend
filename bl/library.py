@@ -7,7 +7,7 @@ import bpy
 import bpy.utils.previews
 
 from ..core import download
-from . import catalog, jobs
+from . import build, catalog, jobs
 from .store import HOME, client, library, prefs, state
 
 
@@ -69,6 +69,21 @@ def built_at_selected(asset_id):
     """A .blend for the chosen texture size exists (or the asset is not scanned yet: assume so)."""
     res = int(prefs().resolution)
     return res in state.built.get(asset_id, {res})
+
+
+def stale_decal(hit):
+    """A decal whose .blend predates the current builder (or decals-as-boxes: it has no object, only a material)."""
+    if not hit.get("decal"):
+        return False
+    path = next(
+        (library() / "Quixlend").glob(f"*/{hit['id']}/*_{int(prefs().resolution) // 1024}K.blend"), None
+    )
+    if path is None:
+        return False
+    if path.stat().st_mtime < Path(build.__file__).stat().st_mtime:
+        return True
+    with bpy.data.libraries.load(str(path), assets_only=True) as (src, _):  # pyright: ignore[reportGeneralTypeIssues]
+        return not src.objects
 
 
 def usable_resolution(asset_id) -> int | None:

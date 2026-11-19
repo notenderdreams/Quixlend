@@ -111,6 +111,7 @@ def hit(rec) -> dict[str, Any]:
         "id": asset_id,
         "name": rec["name"],
         "type": rec["type"],
+        "decal": bool({"decal", "decals"} & set(rec["cats"])),
         "big": "",
         "big_path": str(big) if big.exists() else "",
         "path": str(thumb or ""),

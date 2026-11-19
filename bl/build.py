@@ -28,6 +28,90 @@ TYPE_LABEL = {
 }
 
 
+def is_decal(meta):
+    """Megascans ships decals as atlases in the "decals"/"decal" category."""
+    return any(str(c).lower() in ("decal", "decals") for c in meta.get("categories") or [])
+
+
+def decal_template(name, meta):
+    """A box of the decal's real-world size (`physicalSize` or the scan area, "WxH" metres) and a thickness. It carries
+    the material and the size, and is what the drag preview outlines; placing it makes a projection box (decal.py)."""
+    scan = next((m.get("value") for m in meta.get("meta") or [] if m.get("key") == "scanArea"), None)
+    try:  # "1x2" or "1x2 m"
+        w, h = (
+            float(v) for v in str(meta.get("physicalSize") or scan or "").lower().replace("m", "").split("x")
+        )
+    except ValueError:
+        w = h = 1.0
+    d = min(w, h) / 2
+    x, y, z = w / 2, h / 2, d / 2
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata(
+        [(sx * x, sy * y, sz * z) for sz in (-1, 1) for sy in (-1, 1) for sx in (-1, 1)],
+        [],
+        [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)],
+    )
+    obj = bpy.data.objects.new(name, mesh)
+    obj["quixlend_decal"] = True
+    return obj
+
+
+def pack_decal(folder, label, maps, obj):
+    """Channel-pack the decal's maps into two images, so a decal costs a material two textures, not four (GPUs cap
+    textures per material; past the cap EEVEE draws the material pink): colour = albedo RGB + opacity A,
+    surface = normal X/Y in R/G + roughness in B. Stored on `obj` for the projector."""
+    import numpy as np
+
+    def load(role, size=None):
+        """(pixels as an N x 4 array, (width, height)) of a map, resized to `size`; None if there is no such map."""
+        if role not in maps:
+            return None
+        image = bpy.data.images.load(str(maps[role]))  # a private copy: scaling must not touch the material's
+        if size and cast("tuple[int, int]", image.size)[:] != size:
+            image.scale(*size)
+        w, h = cast("tuple[int, int]", image.size)
+        pixels = np.empty(w * h * 4, np.float32)
+        image.pixels.foreach_get(pixels)
+        bpy.data.images.remove(image)
+        return pixels.reshape(-1, 4), (w, h)
+
+    albedo = load("albedo")
+    opacity = load("opacity", albedo and albedo[1])
+    if not (albedo or opacity):
+        return
+    size = (albedo or opacity)[1]  # pyright: ignore[reportOptionalSubscript]
+    normal, roughness = load("normal", size), load("roughness", size)
+    count = size[0] * size[1]
+
+    def save(kind, rgba, colorspace):
+        path = folder / f"{label}_Decal{kind}.png"
+        image = bpy.data.images.new(path.stem, *size, alpha=True)
+        image.pixels.foreach_set(rgba.ravel())
+        image.filepath_raw, image.file_format = str(path), "PNG"
+        image.save()
+        bpy.data.images.remove(image)
+        image = bpy.data.images.load(str(path))
+        if image.colorspace_settings:
+            image.colorspace_settings.name = colorspace  # pyright: ignore[reportAttributeAccessIssue]
+        image.alpha_mode = "CHANNEL_PACKED"  # alpha is coverage, not premultiplied into the colour
+        obj[f"quixlend_decal_{kind.lower()}"] = image
+
+    color = np.ones((count, 4), np.float32)
+    if albedo:
+        color[:, :3] = albedo[0][:, :3]
+    if opacity:
+        color[:, 3] = opacity[0][:, 0]
+    save("Color", color, "sRGB")
+    if normal or roughness:
+        surface = np.full((count, 4), 0.5, np.float32)
+        surface[:, 3] = 1
+        if normal:
+            surface[:, :2] = normal[0][:, :2]
+        if roughness:
+            surface[:, 2] = roughness[0][:, 0]
+        save("Surface", surface, "Non-Color")
+
+
 def find_maps(folder, lod=None, res=None):
     """{role: path}. Prefers size `res` (pixels), the texture baked for `lod`, then un-suffixed, and EXR for displacement."""
     best = {}
@@ -369,7 +453,8 @@ def build(folder, library, res=None, anti_tiling=True):
     name = (meta.get("name") or asset_id).strip()
     asset_type = (meta.get("categories") or [folder.parent.name])[0].lower()
 
-    objects, lod = import_meshes(folder)
+    decal = is_decal(meta)
+    objects, lod = ([decal_template(asset_id, meta)], None) if decal else import_meshes(folder)
     maps = find_maps(folder, lod, res)
     if not maps:
         raise SystemExit(f"No texture maps found in {folder}")
@@ -380,9 +465,13 @@ def build(folder, library, res=None, anti_tiling=True):
     if objects:
         # One asset per variation: plants ship 5-10 meshes meant to be placed individually.
         mat = build_group_material(label, maps)
+        if decal:
+            mat.surface_render_method = "BLENDED"  # blends over what is beneath; dithered alpha would speckle
+            pack_decal(folder, label, maps, objects[0])
         for i, obj in enumerate(objects, 1):
-            obj.data.materials.clear()
-            obj.data.materials.append(mat)
+            mesh = cast(bpy.types.Mesh, obj.data)
+            mesh.materials.clear()
+            mesh.materials.append(mat)
             obj.name = label if len(objects) == 1 else f"{label} {i:02d}"
         assets = objects
     elif set(maps) == {"brush"}:

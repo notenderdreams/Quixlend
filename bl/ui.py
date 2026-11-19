@@ -9,6 +9,7 @@ import bpy.utils.previews
 from . import catalog, search, store
 from .account import QUIXLEND_OT_login, QUIXLEND_OT_login_open, QUIXLEND_OT_logout
 from .anti_tiling import QUIXLEND_OT_anti_tiling, QUIXLEND_PT_anti_tiling
+from .decal import HANDLERS, QUIXLEND_OT_decal_receivers, QUIXLEND_PT_decal
 from .details import QUIXLEND_OT_delete_resolution, QUIXLEND_OT_details
 from .library import ensure_asset_library, load_owned, scan_local
 from .placement import QUIXLEND_OT_copy_group
@@ -34,6 +35,8 @@ CLASSES = (
     QUIXLEND_PT_variation,
     QUIXLEND_OT_anti_tiling,
     QUIXLEND_PT_anti_tiling,
+    QUIXLEND_OT_decal_receivers,
+    QUIXLEND_PT_decal,
 )
 
 
@@ -69,12 +72,16 @@ def register():
         bpy.utils.register_class(cls)
     search.register_properties()
     bpy.app.handlers.load_post.append(_file_loaded)
+    for handlers, handler in HANDLERS:
+        handlers.append(handler)
     bpy.types.ASSETBROWSER_MT_editor_menus.append(_asset_browser_header)  # pyright: ignore[reportArgumentType]
     bpy.app.timers.register(_startup, first_interval=0.5, persistent=True)
 
 
 def unregister():
     bpy.app.handlers.load_post.remove(_file_loaded)
+    for handlers, handler in HANDLERS:
+        handlers.remove(handler)
     bpy.types.ASSETBROWSER_MT_editor_menus.remove(_asset_browser_header)  # pyright: ignore[reportArgumentType]
     search.unregister_properties()
     for cls in reversed(CLASSES):
