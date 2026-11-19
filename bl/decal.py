@@ -11,7 +11,7 @@ import bpy
 from bpy.app.handlers import persistent
 from mathutils import Vector
 
-from .store import Result, layout_of
+from .store import Result, state
 
 KEY = "quixlend_decal_box"  # custom property on the box: its projector node group
 HALF = 0.5  # the cube spans +-HALF in its own space, so `scale` is its size in metres
@@ -564,16 +564,17 @@ def own(box):
                 var.targets[0].id = box
 
 
-def sync(box, context, extra=()):
-    """Show the decal on exactly the meshes the box overlaps now (plus `extra`), and nowhere else."""
+def sync(box, context):
+    """Show the decal on exactly the meshes the box overlaps now, and nowhere else."""
     own(box)
     group = box[KEY]
-    receivers = {*overlapping(box, context), *extra}
-    project(box, receivers)
+    receivers = overlapping(box, context)
+    full = project(box, receivers)
     here = {s.material for o in receivers for s in o.material_slots if s.material}
     for mat in bpy.data.materials:  # a box moved away from a mesh: drop its layer there
         if mat not in here and mat.node_tree and _layers(mat.node_tree, group):
             unproject(mat, group)
+    return full
 
 
 def sweep():
@@ -665,39 +666,35 @@ HANDLERS = (
 )
 
 
-class QUIXLEND_OT_decal_receivers(bpy.types.Operator):
-    bl_idname = "quixlend.decal_receivers"
-    bl_label = "Update Receivers"
-    bl_description = (
-        "Re-apply the decal now. Moving the box does this by itself; this also adds the selected meshes"
-    )
-    bl_options = {"REGISTER", "UNDO"}
+def editing(context):
+    """The decal box the sidebar should manage: the active object, unless the user went back to the assets."""
+    box = context.object
+    if box is None or KEY not in box:
+        state.back = None
+        return None
+    return None if state.back == box.name else box
 
-    @classmethod
-    def poll(cls, context: bpy.types.Context) -> bool:
-        return context.object is not None and KEY in context.object
+
+def _redraw(context):
+    for area in context.window.screen.areas:
+        area.tag_redraw()
+
+
+class QUIXLEND_OT_decal_back(bpy.types.Operator):
+    bl_idname = "quixlend.decal_back"
+    bl_label = "Back to Assets"
+    bl_description = "Leave the decal manager and show the asset browser"
 
     def execute(self, context: bpy.types.Context) -> Result:
-        box = cast(bpy.types.Object, context.object)
-        sync(box, context, [o for o in context.selected_objects if o.type == "MESH"])
+        state.back = context.object.name if context.object else None
+        _redraw(context)
         return {"FINISHED"}
 
 
-class QUIXLEND_PT_decal(bpy.types.Panel):
-    bl_label = "Quixlend Decal"
-    bl_space_type = "PROPERTIES"
-    bl_region_type = "WINDOW"
-    bl_context = "object"
-
-    @classmethod
-    def poll(cls, context: bpy.types.Context) -> bool:
-        return context.object is not None and KEY in context.object
-
-    def draw(self, context: bpy.types.Context):
-        layout = layout_of(self)
-        box = cast(bpy.types.Object, context.object)
-        if OPACITY in box:
-            layout.prop(box, f'["{OPACITY}"]', text="Opacity", slider=True)
-        layout.label(text="Move (G) slides it over surfaces;", icon="INFO")
-        layout.label(text="scale or copy it freely.")
-        layout.operator("quixlend.decal_receivers", icon="FILE_REFRESH")
+def draw_manager(layout, context, box):
+    """The sidebar's decal manager, drawn in place of the asset browser."""
+    row = layout.row(align=True)
+    row.operator("quixlend.decal_back", text="", icon="BACK")
+    row.label(text=box.name, icon="OUTLINER_OB_EMPTY")
+    if OPACITY in box:
+        layout.prop(box, f'["{OPACITY}"]', text="Opacity", slider=True)

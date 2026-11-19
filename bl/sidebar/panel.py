@@ -5,6 +5,7 @@ import math
 import bpy
 import bpy.utils.previews
 
+from ..decal import draw_manager, editing
 from ..store import icons, layout_of, session, state, wm_of
 from .layout import metrics
 
@@ -38,6 +39,10 @@ class QUIXLEND_PT_browser(bpy.types.Panel):
             row.operator("quixlend.login", text="Connect Account", icon="CHECKMARK")
             if state.status:
                 layout.label(text=state.status, icon="INFO")
+            return
+
+        if box := editing(context):
+            draw_manager(layout, context, box)
             return
 
         row = layout.row(align=True)

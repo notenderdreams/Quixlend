@@ -4,7 +4,9 @@ import math
 from typing import Any
 
 import blf
+import bpy
 
+from ..decal import editing
 from ..store import is_material, prefs, session, state
 from ..transfer import download_size
 from . import gfx
@@ -139,5 +141,6 @@ def active(region):
         region.type == "UI"
         and region.active_panel_category == CATEGORY
         and session.logged_in
+        and editing(bpy.context) is None
         and region.width >= MIN_REGION * gfx.scale()
     )
