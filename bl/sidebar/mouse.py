@@ -13,7 +13,7 @@ from mathutils.geometry import intersect_line_plane
 from ...core import api
 from ..decal import orientation
 from ..details import open_details
-from ..library import built_at_selected, has_selected, stale_decal
+from ..library import built_at_selected, has_selected, stale_plane
 from ..placement import place
 from ..settings import draw_res_menu
 from ..store import Result, is_material, prefs, state
@@ -192,7 +192,7 @@ class QUIXLEND_OT_card(bpy.types.Operator):
             area.tag_redraw()
             bpy.app.timers.register(run, first_interval=0.05)
 
-        if built_at_selected(asset_id) and not stale_decal(hit):
+        if built_at_selected(asset_id) and not stale_plane(hit):
             start()
         else:  # the textures of the chosen resolution are on disk but the asset still uses another: rebuild first
             build_resolution(asset_id, int(prefs().resolution), start)

@@ -71,9 +71,9 @@ def built_at_selected(asset_id):
     return res in state.built.get(asset_id, {res})
 
 
-def stale_decal(hit):
-    """A decal whose .blend predates the current builder (or decals-as-boxes: it has no object, only a material)."""
-    if not hit.get("decal"):
+def stale_plane(hit):
+    """An atlas whose .blend was built before atlases became planes and boxes: no object in it, or built by older code."""
+    if hit.get("type") != "atlas":
         return False
     path = next(
         (library() / "Quixlend").glob(f"*/{hit['id']}/*_{int(prefs().resolution) // 1024}K.blend"), None

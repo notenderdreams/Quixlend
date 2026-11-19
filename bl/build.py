@@ -33,16 +33,22 @@ def is_decal(meta):
     return any(str(c).lower() in ("decal", "decals") for c in meta.get("categories") or [])
 
 
-def decal_template(name, meta):
-    """A box of the decal's real-world size (`physicalSize` or the scan area, "WxH" metres) and a thickness. It carries
-    the material and the size, and is what the drag preview outlines; placing it makes a projection box (decal.py)."""
+def sheet_size(meta):
+    """(width, height) in metres of a flat asset: `physicalSize`, else the scan area ("1x2" or "1x2 m"), else 1 x 1."""
     scan = next((m.get("value") for m in meta.get("meta") or [] if m.get("key") == "scanArea"), None)
-    try:  # "1x2" or "1x2 m"
+    try:
         w, h = (
             float(v) for v in str(meta.get("physicalSize") or scan or "").lower().replace("m", "").split("x")
         )
+        return w, h
     except ValueError:
-        w = h = 1.0
+        return 1.0, 1.0
+
+
+def decal_template(name, meta):
+    """A box of the decal's real-world size and a thickness. It carries the material and the size, and is what the
+    drag preview outlines; placing it makes a projection box (decal.py)."""
+    w, h = sheet_size(meta)
     d = min(w, h) / 2
     x, y, z = w / 2, h / 2, d / 2
     mesh = bpy.data.meshes.new(name)
@@ -54,6 +60,20 @@ def decal_template(name, meta):
     obj = bpy.data.objects.new(name, mesh)
     obj["quixlend_decal"] = True
     return obj
+
+
+def card_plane(name, meta):
+    """An atlas (a sheet of cut-out leaves, debris, ...) as a plane of its real size, standing on the ground facing
+    -Y (the way a front view sees it), UV-mapped to the whole sheet."""
+    w, h = sheet_size(meta)
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata([(-w / 2, 0, 0), (w / 2, 0, 0), (w / 2, 0, h), (-w / 2, 0, h)], [], [(0, 1, 2, 3)])
+    uv = mesh.uv_layers.new(name="UVMap")
+    assert uv
+    for loop in mesh.loops:
+        x, _, z = mesh.vertices[loop.vertex_index].co
+        uv.data[loop.index].uv = (x / w + 0.5, z / h)
+    return bpy.data.objects.new(name, mesh)
 
 
 def pack_decal(folder, label, maps, obj):
@@ -454,7 +474,13 @@ def build(folder, library, res=None, anti_tiling=True):
     asset_type = (meta.get("categories") or [folder.parent.name])[0].lower()
 
     decal = is_decal(meta)
-    objects, lod = ([decal_template(asset_id, meta)], None) if decal else import_meshes(folder)
+    card = asset_type == "atlas" and not decal
+    if decal:
+        objects, lod = [decal_template(asset_id, meta)], None
+    elif card:
+        objects, lod = [card_plane(asset_id, meta)], None
+    else:
+        objects, lod = import_meshes(folder)
     maps = find_maps(folder, lod, res)
     if not maps:
         raise SystemExit(f"No texture maps found in {folder}")
@@ -468,6 +494,8 @@ def build(folder, library, res=None, anti_tiling=True):
         if decal:
             mat.surface_render_method = "BLENDED"  # blends over what is beneath; dithered alpha would speckle
             pack_decal(folder, label, maps, objects[0])
+        elif card:
+            mat.use_backface_culling = False  # a leaf card is seen from both sides
         for i, obj in enumerate(objects, 1):
             mesh = cast(bpy.types.Mesh, obj.data)
             mesh.materials.clear()
