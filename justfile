@@ -22,6 +22,10 @@ fix:
 test:
     python3 -m unittest discover -s tests -t .
 
+# reload the extension in the running Blender (via the Blender MCP socket)
+reload:
+    python3 scripts/reload.py
+
 # remove ruff cache and __pycache__ dirs
 clean:
     rm -rf .ruff_cache
