@@ -1,25 +1,29 @@
-"""Reload the extension in a running Blender, through the Blender MCP add-on's socket (localhost:9876)."""
+"""Reload the extension in a running Blender, through the Blender MCP add-on's socket."""
 
 import json
 import socket
 import sys
 
-CODE = """
+NAME = "bl_ext.user_default.quixlend"
+MCP_PORT = 9876
+
+CODE = f"""
 import sys, addon_utils
-name = next(m.__name__ for m in addon_utils.modules() if m.__name__.endswith(".quixlend"))
-addon_utils.disable(name, default_set=False)
-for k in [k for k in sys.modules if k == name or k.startswith(name + ".")]:
-    del sys.modules[k]
-addon_utils.enable(name, default_set=True, persistent=True)
-print("reloaded", name)
+addon_utils.disable({NAME!r}, default_set=False)
+for k in [k for k in sys.modules if k == {NAME!r} or k.startswith({NAME!r} + ".")]:
+    del sys.modules[k]  # enable alone keeps the stale sub-modules
+addon_utils.enable({NAME!r}, default_set=True, persistent=True)
+print("reloaded", {NAME!r})
 """
 
 
 def main():
     try:
-        sock = socket.create_connection(("localhost", 9876), timeout=30)
+        sock = socket.create_connection(("localhost", MCP_PORT), timeout=30)
     except OSError:
-        sys.exit("Blender MCP not reachable on localhost:9876 (is Blender open with the MCP add-on on?)")
+        sys.exit(
+            f"Blender MCP not reachable on localhost:{MCP_PORT} (is Blender open with the MCP add-on on?)"
+        )
     with sock:
         sock.sendall(json.dumps({"type": "execute_code", "params": {"code": CODE}}).encode())
         data = b""
