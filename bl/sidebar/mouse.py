@@ -19,6 +19,8 @@ from ..settings import draw_res_menu
 from ..store import Result, is_material, prefs, state
 from ..transfer import build_resolution, cancel_download
 from . import gfx
+from .downloads import click as downloads_click
+from .downloads import covers
 from .interact import flash, pointer
 from .layout import active, zone_at
 from .preview import dwell, wireframe
@@ -38,7 +40,7 @@ class QUIXLEND_OT_hover(bpy.types.Operator):
         region = context.region
         hit, zone = (
             zone_at(region, event.mouse_region_x, event.mouse_region_y)
-            if region and active(region)
+            if region and active(region) and not covers(region, event.mouse_region_x, event.mouse_region_y)
             else (None, None)
         )
         current = (region.as_pointer(), hit["id"], zone) if hit else None
@@ -69,6 +71,9 @@ class QUIXLEND_OT_card(bpy.types.Operator):
         region = context.region
         if not region or not active(region):
             return {"PASS_THROUGH"}
+        if downloads_click(region, event.mouse_region_x, event.mouse_region_y):
+            context.area.tag_redraw()
+            return {"FINISHED"}
         hit, self.zone = zone_at(region, event.mouse_region_x, event.mouse_region_y)
         if not hit or not context.area:
             return {"PASS_THROUGH"}

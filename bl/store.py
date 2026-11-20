@@ -109,6 +109,7 @@ def big() -> bpy.utils.previews.ImagePreviewCollection:
 class state:
     hits: list[dict[str, Any]] = []  # [{id, name, image}] image = thumbnail datablock (or None)
     back: str | None = None  # decal box the user left the manager for, until another object is active
+    downloads_open = False  # the download card is showing
     panel_open = False  # set by the panel each time it draws; tells the grid overlay to draw
     seq = 0  # id of the latest search
     page = 0

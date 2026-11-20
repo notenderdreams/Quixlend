@@ -1,23 +1,36 @@
 """Registers the sidebar panel, the mouse operators, the draw handlers and the keymap."""
 
+import contextlib
+
 import bpy
 
 from .cards import draw_grid
+from .downloads import QUIXLEND_OT_downloads, draw_downloads
 from .mouse import QUIXLEND_OT_card, QUIXLEND_OT_hover
 from .panel import QUIXLEND_PT_browser
 from .preview import draw_drag, draw_drag_3d, draw_preview
 
-_handles = []
+_handles = bpy.app.driver_namespace.setdefault("quixlend_handles", [])  # outlives a module reload
+
+
+def _drop_handles():
+    for handle, region in _handles:
+        with contextlib.suppress(ValueError, RuntimeError):  # already gone
+            bpy.types.SpaceView3D.draw_handler_remove(handle, region)
+    _handles.clear()
 
 
 def register():
+    _drop_handles()  # whatever a previous load left behind
     bpy.utils.register_class(QUIXLEND_PT_browser)
+    bpy.utils.register_class(QUIXLEND_OT_downloads)
     bpy.utils.register_class(QUIXLEND_OT_hover)
     bpy.utils.register_class(QUIXLEND_OT_card)
     space = bpy.types.SpaceView3D
     _handles.extend(
         [
             (space.draw_handler_add(draw_grid, (), "UI", "POST_PIXEL"), "UI"),
+            (space.draw_handler_add(draw_downloads, (), "UI", "POST_PIXEL"), "UI"),
             (space.draw_handler_add(draw_drag, (), "UI", "POST_PIXEL"), "UI"),
             (space.draw_handler_add(draw_drag, (), "WINDOW", "POST_PIXEL"), "WINDOW"),
             (space.draw_handler_add(draw_preview, (), "WINDOW", "POST_PIXEL"), "WINDOW"),
@@ -37,9 +50,8 @@ def unregister():
         keymap = keyconfig.keymaps["3D View Generic"]
         for item in [i for i in keymap.keymap_items if i.idname in {"quixlend.card", "quixlend.hover"}]:
             keymap.keymap_items.remove(item)
-    for handle, region in _handles:
-        bpy.types.SpaceView3D.draw_handler_remove(handle, region)
-    _handles.clear()
+    _drop_handles()
     bpy.utils.unregister_class(QUIXLEND_OT_card)
     bpy.utils.unregister_class(QUIXLEND_OT_hover)
+    bpy.utils.unregister_class(QUIXLEND_OT_downloads)
     bpy.utils.unregister_class(QUIXLEND_PT_browser)

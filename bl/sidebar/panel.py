@@ -7,6 +7,7 @@ import bpy.utils.previews
 
 from ..decal import draw_manager, editing
 from ..store import icons, layout_of, session, state, wm_of
+from .downloads import active_ids
 from .layout import metrics
 
 
@@ -20,7 +21,13 @@ class QUIXLEND_PT_browser(bpy.types.Panel):
         layout_of(self).label(text="", icon_value=icons()["quixel"].icon_id)
 
     def draw_header_preset(self, context: bpy.types.Context):
-        layout_of(self).popover(panel="QUIXLEND_PT_settings", text="", icon="PREFERENCES")
+        row = layout_of(self).row()
+        plain = row.row()
+        plain.emboss = "NONE"  # no background
+        busy = len(active_ids())
+        plain.operator("quixlend.downloads", text=str(busy) if busy else "", icon="IMPORT")
+        row.separator(factor=1.5)
+        row.popover(panel="QUIXLEND_PT_settings", text="", icon="PREFERENCES")
 
     def draw(self, context: bpy.types.Context):
         layout, wm = layout_of(self), wm_of(context)
