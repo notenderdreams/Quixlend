@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "quixlend"
-version = "0.1.0"
+version = "0.2.0"
 name = "Quixlend"
 tagline = "Search and download your Megascans assets into the Asset Browser"
 maintainer = "Nahian (notenderdreams)"

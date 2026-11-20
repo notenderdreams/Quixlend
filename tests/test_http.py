@@ -3,6 +3,7 @@
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 from core import http
@@ -62,3 +63,15 @@ class Retry(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UserAgent(unittest.TestCase):
+    def test_version_comes_from_the_manifest(self):
+        import tomllib
+
+        manifest = tomllib.loads(http.MANIFEST.read_text())
+        self.assertEqual(http.UA, f"quixlend/{manifest['version']}")
+
+    def test_unreadable_manifest_does_not_break_requests(self):
+        with mock.patch.object(http, "MANIFEST", Path("/nonexistent/blender_manifest.toml")):
+            self.assertEqual(http._version(), "unknown")

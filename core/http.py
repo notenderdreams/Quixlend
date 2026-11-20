@@ -2,12 +2,25 @@
 
 import json
 import time
+import tomllib
 import urllib.error
 import urllib.request
 from http.client import HTTPException
+from pathlib import Path
 from typing import Any
 
-UA = "quixlend/0.1"
+MANIFEST = Path(__file__).parents[1] / "blender_manifest.toml"
+
+
+def _version() -> str:
+    """The extension's version, from its manifest, so a release changes it in one place."""
+    try:
+        return str(tomllib.loads(MANIFEST.read_text())["version"])
+    except (OSError, ValueError, KeyError):
+        return "unknown"  # a request must never fail because of its User-Agent
+
+
+UA = f"quixlend/{_version()}"
 
 
 class HttpError(Exception):
