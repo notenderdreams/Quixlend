@@ -155,7 +155,7 @@ class QUIXLEND_OT_copy_group(bpy.types.Operator):
         # changing its type tears down its render session and Cycles would restart.
         areas = [a for a in window.screen.areas if a.type != "VIEW_3D"]
         area = next((a for a in areas if a.type == "NODE_EDITOR"), None) or min(
-            areas, key=lambda a: a.width * a.height, default=context.area
+            areas, key=lambda a: a.width * a.height, default=None
         )
         if area is None:
             self.report({"WARNING"}, "No editor to borrow for copying")

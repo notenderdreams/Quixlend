@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import re
+import threading
 import time
 import urllib.parse
 from pathlib import Path
@@ -36,17 +37,25 @@ def parse_code(pasted: str) -> str:
 
 
 def claims(token: str) -> dict:
-    body = token.split(".")[1]
-    return json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+    """The token's payload; empty for anything that is not a JWT, so a damaged token reads as expired, not as a crash."""
+    try:
+        body = token.split(".")[1]
+        data = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+    except (IndexError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 class Session:
     def __init__(self, path):
         self.path = Path(path)
         self.token = self.refresh_token = ""
-        if self.path.exists():
+        self._lock = threading.Lock()  # searches and downloads refresh from different threads
+        try:
             data = json.loads(self.path.read_text())
-            self.token, self.refresh_token = data.get("token", ""), data.get("refreshToken", "")
+            self.token, self.refresh_token = str(data.get("token", "")), str(data.get("refreshToken", ""))
+        except (OSError, ValueError, AttributeError):
+            pass  # no session file, or one damaged by a crash: signed out, never a reason to fail to start
 
     @property
     def logged_in(self) -> bool:
@@ -61,14 +70,22 @@ class Session:
             raise AuthError(f"Login response had no token: {res}")
         self.token, self.refresh_token = res["token"], res.get("refreshToken", "")
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        tmp = self.path.with_name(
+            self.path.name + ".tmp"
+        )  # replaced whole, so a crash never leaves half a file
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
             json.dump({"token": self.token, "refreshToken": self.refresh_token}, f)
+        tmp.replace(self.path)
 
     def login_with_code(self, pasted: str):
         self._store(http.post(SSO + "login/epic", {"code": parse_code(pasted), "realm": REALM}))
 
     def refresh(self):
+        with self._lock:
+            self._refresh()
+
+    def _refresh(self):
         if not self.token:
             raise AuthError("Not logged in")
         self._store(
@@ -87,9 +104,14 @@ class Session:
         """Valid access token, refreshed if within 60s of expiry."""
         if not self.token:
             raise AuthError("Not logged in")
-        if claims(self.token).get("exp", 0) < time.time() + 60:
-            self.refresh()
+        if self._expiring():
+            with self._lock:
+                if self._expiring():  # another thread may have refreshed while this one waited
+                    self._refresh()
         return self.token
+
+    def _expiring(self) -> bool:
+        return claims(self.token).get("exp", 0) < time.time() + 60
 
     def logout(self):
         self.token = self.refresh_token = ""

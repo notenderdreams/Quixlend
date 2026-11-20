@@ -400,6 +400,17 @@ class Cancel(unittest.TestCase):
                 download.fetch_all(plan(server, self.dest), cancel=cancel)
             self.assertEqual(server.requests(), [])
 
+    def test_cancel_removes_only_the_asset_folders_it_made(self):
+        library = self.dest / "library"
+        library.mkdir(parents=True)
+        asset = library / "asset"
+        cancel = threading.Event()
+        cancel.set()
+        with TestServer(FILES) as server, self.assertRaises(download.Cancelled):
+            download.fetch_all(plan(server, asset), cancel=cancel)
+        self.assertFalse(asset.exists())  # what the download created is gone
+        self.assertTrue(library.exists())  # the user's library folder is not ours to remove
+
     def test_downloading_again_after_a_cancel_starts_cleanly(self):
         cancel = threading.Event()
         with TestServer(FILES) as server:

@@ -25,8 +25,12 @@ class QUIXLEND_PT_browser(bpy.types.Panel):
         plain = row.row()
         plain.emboss = "NONE"  # no background
         busy = len(active_ids())
-        plain.operator("quixlend.downloads", text=("9+" if busy > 9 else str(busy)) if busy else "", icon="IMPORT")
-        plain.operator("wm.call_panel", text="", icon="PREFERENCES").name = "QUIXLEND_PT_settings"
+        plain.operator(
+            "quixlend.downloads", text=("9+" if busy > 9 else str(busy)) if busy else "", icon="IMPORT"
+        )
+        settings = plain.operator("wm.call_panel", text="", icon="PREFERENCES")
+        assert settings  # an operator that exists always returns its properties
+        settings.name = "QUIXLEND_PT_settings"
 
     def draw(self, context: bpy.types.Context):
         layout, wm = layout_of(self), wm_of(context)

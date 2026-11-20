@@ -70,7 +70,9 @@ def refresh():
                 continue  # no meta file yet (still downloading) or unreadable: not indexable
         if found != old:
             HOME.mkdir(parents=True, exist_ok=True)
-            CACHE.write_text(json.dumps(found, separators=(",", ":")))
+            part = CACHE.with_name(CACHE.name + ".part")
+            part.write_text(json.dumps(found, separators=(",", ":")))
+            part.replace(CACHE)
         return found
 
     def done(found, error):

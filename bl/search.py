@@ -20,9 +20,12 @@ def big_preview(hit):
         return Path(hit["big_path"])
     path = HOME / "thumbs" / f"{hit['id']}_big.jpg"
     if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        part = path.with_suffix(".part")  # whole or not at all: a cut-off image would be reused for ever
         req = urllib.request.Request(hit["big"], headers={"User-Agent": http.UA})
         with urllib.request.urlopen(req, timeout=30) as res:
-            path.write_bytes(res.read())
+            part.write_bytes(res.read())
+        part.replace(path)
     return path
 
 

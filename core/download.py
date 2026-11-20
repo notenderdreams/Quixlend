@@ -110,7 +110,7 @@ def plan(res, dest) -> list:
         items = res.get(section) or []
         for item in [items] if isinstance(items, dict) else items:
             path = dest.joinpath(*rel(item["uri"]))
-            if dest not in path.resolve().parents and dest.resolve() not in path.resolve().parents:
+            if dest.resolve() not in path.resolve().parents:
                 raise DownloadError(f"Refusing path outside asset folder: {item['uri'].split('?')[0]}")
             files.append((item["uri"], path, item.get("contentLength")))
     return files
@@ -403,8 +403,9 @@ def fetch_all(files, progress=None, workers=8, refresh=None, cancel=None, speed=
             finally:
                 todo.task_done()
 
-    started, needed = [], 0
+    started, needed, made = [], 0, set()  # made: the folders this download creates
     for uri, path, size in sorted(files, key=lambda f: -(f[2] or 0)):
+        made.update(d for d in (path.parent, *path.parent.parents) if not d.exists())
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.exists() and size and path.stat().st_size == size:
             on_bytes(size)
@@ -447,12 +448,11 @@ def fetch_all(files, progress=None, workers=8, refresh=None, cancel=None, speed=
             if not f.path.exists():
                 f.part.unlink(missing_ok=True)
                 f.sidecar.unlink(missing_ok=True)
-        for _, path, _ in files:
-            for folder in path.parents:
-                try:
-                    folder.rmdir()  # only empty ones go
-                except OSError:
-                    break
+        for folder in sorted(
+            made, key=lambda d: -len(d.parts)
+        ):  # deepest first, so a parent is empty by then
+            with contextlib.suppress(OSError):
+                folder.rmdir()  # only empty ones go; nothing that was there before the download is touched
         raise Cancelled
     if failure:
         raise failure[0]

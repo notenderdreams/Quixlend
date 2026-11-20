@@ -1,5 +1,6 @@
 """The Megascans library on disk: what is downloaded, what is owned, and the Blender asset library."""
 
+import contextlib
 import json
 from pathlib import Path
 
@@ -105,10 +106,10 @@ def ensure_asset_library():
     if not any(Path(lib.path) == root for lib in libs):
         root.mkdir(parents=True, exist_ok=True)
         libs.new(name="Megascans", directory=str(root))
-    from .build import TYPE_LABEL, catalog_id
-
-    for asset_type in TYPE_LABEL:  # one catalog per type, so every section shows before its first download
-        catalog_id(root, asset_type)
+    for (
+        asset_type
+    ) in build.TYPE_LABEL:  # one catalog per type, so every section shows before its first download
+        build.catalog_id(root, asset_type)
 
 
 def refresh_asset_browsers():
@@ -128,12 +129,17 @@ def refresh_asset_browsers():
 def load_owned():
     """Owned-asset ids: instant from the disk cache, then refreshed once in the background."""
     cache = HOME / "owned.json"
-    if cache.exists():
+    with contextlib.suppress(
+        OSError, ValueError, TypeError
+    ):  # no cache yet, or a damaged one: wait for the fetch
         state.owned = set(json.loads(cache.read_text()))
 
     def work():
         owned = sorted({a["assetID"] for a in client.acquired()})
-        cache.write_text(json.dumps(owned))
+        HOME.mkdir(parents=True, exist_ok=True)
+        part = cache.with_name(cache.name + ".part")
+        part.write_text(json.dumps(owned))
+        part.replace(cache)  # whole or not at all
         return owned
 
     def done(owned, error):

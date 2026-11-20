@@ -161,7 +161,10 @@ def build_asset(asset_id, dest, res, root, blender, anti_tiling):
         text=True,
     )
     if "QUIXLEND_BUILT" not in proc.stdout:
-        raise RuntimeError((proc.stderr or proc.stdout).strip().splitlines()[-1])
+        lines = (proc.stderr or proc.stdout).strip().splitlines()
+        raise RuntimeError(
+            lines[-1] if lines else f"Blender exited with code {proc.returncode} while building"
+        )
 
 
 def build_resolution(asset_id, res, then):

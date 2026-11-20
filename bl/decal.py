@@ -695,10 +695,29 @@ def on_restore(*_):
         bpy.app.timers.register(_flush, first_interval=0.1)
 
 
+@persistent
+def on_load(*_):
+    """A different file has its own snap settings: what was saved from the last one is not theirs to get back."""
+    _snap.clear()
+
+
+def shutdown():
+    """The add-on is going away: no sync left pending, and the user's snap settings back if a box had changed them."""
+    if bpy.app.timers.is_registered(_flush):
+        bpy.app.timers.unregister(_flush)
+    _dirty.clear()
+    if _snap:
+        tools = bpy.context.scene.tool_settings
+        for key, value in _snap.items():
+            setattr(tools, key, value)
+        _snap.clear()
+
+
 HANDLERS = (
     (bpy.app.handlers.depsgraph_update_post, on_update),
     (bpy.app.handlers.undo_post, on_restore),
     (bpy.app.handlers.redo_post, on_restore),
+    (bpy.app.handlers.load_post, on_load),
     (bpy.app.handlers.load_post, on_restore),
 )
 
