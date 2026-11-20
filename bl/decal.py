@@ -16,6 +16,7 @@ from .store import Result, state
 KEY = "quixlend_decal_box"  # custom property on the box: its projector node group
 HALF = 0.5  # the cube spans +-HALF in its own space, so `scale` is its size in metres
 OPACITY = "Opacity"  # custom property on the box, a slider in its panel
+FLIP_SIDE = "Flip Side"  # custom property on the box, a checkbox: with One Side, the side opposite its +Z
 ONE_SIDE = "One Side"  # custom property on the box, a toggle: show only on the side its +Z points to
 FADE = 0.6  # the decal fades out over the outer part of the box's depth: from FADE * HALF to HALF
 
@@ -32,6 +33,7 @@ def make_box(source, name):
     box.scale = decal_size(source)
     box[OPACITY] = 1.0
     box[ONE_SIDE] = False
+    box[FLIP_SIDE] = False
     box.id_properties_ui(OPACITY).update(min=0.0, max=1.0, subtype="FACTOR")  # pyright: ignore[reportOptionalMemberAccess]
     box[KEY] = build_projector(box, source)
     return box
@@ -347,8 +349,16 @@ def build_projector(box, source):
     facing = node("ShaderNodeVectorMath", "Facing the Box", operation="DOT_PRODUCT")
     links.new(geometry.outputs["Normal"], facing.inputs[0])
     links.new(axis.outputs["Vector"], facing.inputs[1])
-    toward = node("ShaderNodeMath", "Faces +Z", operation="GREATER_THAN")
-    links.new(facing.outputs["Value"], toward.inputs[0])
+    flip = node("ShaderNodeValue", "Flip Side (from the box)")
+    _drive_property(flip.outputs[0], box, FLIP_SIDE)
+    way = node("ShaderNodeMath", "Side Sign", operation="MULTIPLY_ADD")  # 1, or -1 when flipped
+    links.new(flip.outputs[0], way.inputs[0])
+    way.inputs[1].default_value, way.inputs[2].default_value = -2.0, 1.0  # pyright: ignore[reportAttributeAccessIssue]
+    turned = node("ShaderNodeMath", "Facing x Sign", operation="MULTIPLY")
+    links.new(facing.outputs["Value"], turned.inputs[0])
+    links.new(way.outputs["Value"], turned.inputs[1])
+    toward = node("ShaderNodeMath", "Faces the Side", operation="GREATER_THAN")
+    links.new(turned.outputs["Value"], toward.inputs[0])
     toward.inputs[1].default_value = 0.0  # pyright: ignore[reportAttributeAccessIssue]
     miss = node("ShaderNodeMath", "Facing - 1", operation="SUBTRACT")
     links.new(toward.outputs["Value"], miss.inputs[0])
@@ -726,4 +736,9 @@ def draw_manager(layout, context, box):
     if OPACITY in box:
         layout.prop(box, f'["{OPACITY}"]', text="Opacity", slider=True)
     if ONE_SIDE in box:
-        layout.prop(box, f'["{ONE_SIDE}"]', text="One Side Only", toggle=True)
+        row = layout.row()
+        row.prop(box, f'["{ONE_SIDE}"]', text="One Side Only")
+        if FLIP_SIDE in box:
+            flip = row.row()
+            flip.enabled = bool(box[ONE_SIDE])  # greyed out until One Side is on
+            flip.prop(box, f'["{FLIP_SIDE}"]', text="Flip Side")
