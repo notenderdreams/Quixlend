@@ -87,6 +87,14 @@ class QuixlendPreferences(bpy.types.AddonPreferences):
         description="Most thumbnail columns to show. 0: automatic, as many as fit the panel width",
         update=lambda self, context: jobs.redraw(),
     )
+    simultaneous_downloads: IntProperty(  # pyright: ignore[reportInvalidTypeForm]
+        name="Simultaneous Downloads",
+        default=4,
+        min=0,
+        max=16,
+        description="How many assets download at once; the rest wait in the queue. 0: no limit",
+        update=lambda self, context: state.queue.set_limit(prefs().simultaneous_downloads),
+    )
     asset_collections: BoolProperty(  # pyright: ignore[reportInvalidTypeForm]
         name="Collection per Asset",
         default=False,
@@ -124,6 +132,7 @@ class QuixlendPreferences(bpy.types.AddonPreferences):
         layout.prop(self, "resolution")
         layout.prop(self, "fetch_sizes")
         layout.prop(self, "max_columns")
+        layout.prop(self, "simultaneous_downloads")
         layout.prop(self, "asset_collections")
         layout.prop(self, "anti_tiling")
         layout.prop(self, "hover_preview")
@@ -149,6 +158,7 @@ class QUIXLEND_PT_settings(bpy.types.Panel):
         layout.prop(prefs(), "resolution")
         layout.prop(prefs(), "fetch_sizes")
         layout.prop(prefs(), "max_columns")
+        layout.prop(prefs(), "simultaneous_downloads")
         layout.prop(prefs(), "asset_collections")
         layout.prop(prefs(), "anti_tiling")
         layout.prop(prefs(), "hover_preview")

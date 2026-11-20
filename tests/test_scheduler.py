@@ -21,6 +21,19 @@ class Harness:
 
 
 class SchedulerTest(unittest.TestCase):
+    def test_zero_is_no_limit(self):
+        h = Harness(0)
+        for key in "abcde":
+            h.add(key)
+        self.assertEqual(h.started, list("abcde"))
+
+    def test_raising_the_limit_starts_waiting_jobs(self):
+        h = Harness(1)
+        for key in "abc":
+            h.add(key)
+        h.scheduler.set_limit(3)
+        self.assertEqual(h.started, ["a", "b", "c"])
+
     def test_two_run_at_once_and_the_rest_wait(self):
         h = Harness()
         for key in "abcde":

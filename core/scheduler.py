@@ -1,4 +1,4 @@
-"""Run at most `limit` jobs at a time, the rest wait in click order. No bpy; single-threaded use."""
+"""Run at most `limit` jobs at a time (0: no limit), the rest wait in click order. No bpy; single-threaded use."""
 
 
 class Scheduler:
@@ -16,6 +16,11 @@ class Scheduler:
         self._pump()
         return True
 
+    def set_limit(self, limit):
+        """Change the limit; a higher one starts waiting jobs right away."""
+        self.limit = limit
+        self._pump()
+
     def queued(self, key):
         return key in self.waiting
 
@@ -24,7 +29,7 @@ class Scheduler:
         return self.waiting.pop(key, None) is not None
 
     def _pump(self):
-        while self.waiting and len(self.active) < self.limit:
+        while self.waiting and (not self.limit or len(self.active) < self.limit):
             key = next(iter(self.waiting))
             run = self.waiting.pop(key)
             self.active.add(key)

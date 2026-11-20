@@ -142,6 +142,7 @@ class QUIXLEND_OT_download(bpy.types.Operator):
                 settle(e)
                 finished()
 
+        state.queue.limit = prefs().simultaneous_downloads
         state.queue.add(asset_id, run)
         jobs.redraw()  # show Queued/progress now, not on the next mouse move
         return {"FINISHED"}

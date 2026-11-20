@@ -108,7 +108,7 @@ def draw_downloads():
     region = bpy.context.region
     if not state.downloads_open or not active(region):
         return
-    if not state.downloads_seen:  # the panel didn't draw since the last frame: it was collapsed, so close the card
+    if not state.downloads_seen:  # the panel didn't draw last frame: collapsed, so close
         state.downloads_open = False
         return
     state.downloads_seen = False  # set again by the panel on its next draw

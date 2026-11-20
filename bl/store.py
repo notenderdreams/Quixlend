@@ -130,7 +130,7 @@ class state:
         str, tuple[float | None, float | None]
     ] = {}  # id -> (bytes/s, seconds left) while downloading; None parts until known
     transferred: dict[str, tuple[int, int]] = {}  # id -> (bytes done, bytes total) while downloading
-    queue = Scheduler(2)  # at most two assets download at once; the rest wait in click order
+    queue = Scheduler(4)  # kept in step with the preference; the rest wait in click order
     building: set[str] = set()  # ids past the network part, being built into the library
     cancel: dict[
         str, threading.Event
@@ -160,6 +160,7 @@ if TYPE_CHECKING:
         resolution: str
         fetch_sizes: bool
         max_columns: int
+        simultaneous_downloads: int
         asset_collections: bool
         anti_tiling: bool
         hover_preview: bool
