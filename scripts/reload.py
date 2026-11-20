@@ -17,7 +17,8 @@ print("reloaded", {NAME!r})
 """
 
 
-def main():
+def run(code):
+    """Run `code` in Blender through the MCP socket; return its printed output."""
     try:
         sock = socket.create_connection(("localhost", MCP_PORT), timeout=30)
     except OSError:
@@ -25,7 +26,7 @@ def main():
             f"Blender MCP not reachable on localhost:{MCP_PORT} (is Blender open with the MCP add-on on?)"
         )
     with sock:
-        sock.sendall(json.dumps({"type": "execute_code", "params": {"code": CODE}}).encode())
+        sock.sendall(json.dumps({"type": "execute_code", "params": {"code": code}}).encode())
         data = b""
         while True:
             data += sock.recv(65536)
@@ -36,7 +37,8 @@ def main():
                 pass  # reply not complete yet
     if reply.get("status") == "error":
         sys.exit(reply.get("message"))
-    print(reply["result"]["result"].strip())
+    return reply["result"]["result"].strip()
 
 
-main()
+if __name__ == "__main__":
+    print(run(CODE))

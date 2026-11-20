@@ -43,3 +43,7 @@ release:
     blender --factory-startup --command extension server-generate --repo-dir dist
     # stable asset name so one `latest/download/quixlend.zip` link works for drag and drop
     python3 -c "import json,pathlib as p;z=next(p.Path('dist').glob('*.zip'));z.rename('dist/quixlend.zip');f=p.Path('dist/index.json');d=json.loads(f.read_text());d['data'][0]['archive_url']='./quixlend.zip';f.write_text(json.dumps(d,indent=2))"
+
+# symlink this repo into Blender's extensions dir and enable it (via the Blender MCP socket)
+link:
+    python3 scripts/link.py
