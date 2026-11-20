@@ -10,10 +10,12 @@ import gpu
 from .. import catalog
 from ..search import thumb_image
 from ..store import Result, state
-from ..transfer import cancel_download
+from ..transfer import cancel_download, download_size
 from . import gfx
 from .cards import _draw_cancel
 from .layout import HEADER_UNITS, active, metrics
+
+FOOTER = 22  # height of the totals strip at the bottom of the card, in widget units
 
 
 def active_ids():
@@ -24,6 +26,27 @@ def active_ids():
 def _name(asset_id):
     hit = next((h for h in state.hits if h["id"] == asset_id), None)
     return (hit or catalog.meta(asset_id) or {}).get("name") or asset_id
+
+
+def totals():
+    """(bytes per second, seconds left) over everything in flight; None for a part not known yet. The time is what
+    remains to fetch, here and in the queue, at the speed they are going now."""
+    speed = sum(bps or 0 for bps, _ in (state.speed.get(i, (None, None)) for i in state.progress))
+    left = 0
+    for asset_id in active_ids():
+        if asset_id in state.building:
+            continue
+        done, total = state.transferred.get(asset_id, (0, 0))
+        left += total - done if total else (download_size(asset_id, fetch=False) or 0)
+    return (speed or None), (left / speed if speed and left else None)
+
+
+def _footer():
+    speed, eta = totals()
+    parts = [f"{gfx.size_text(speed)}/s"] if speed else []
+    if eta:
+        parts.append(f"{gfx.duration(eta)} left")
+    return " · ".join(parts) or f"{len(active_ids())} in progress"
 
 
 def _thumb(asset_id):
@@ -43,7 +66,7 @@ def geometry(region):
     s, m = gfx.scale(), metrics(region)
     pad, row_h = 8 * s, 46 * s
     ids = active_ids()
-    height = 2 * pad + max(1, len(ids)) * row_h
+    height = 2 * pad + max(1, len(ids)) * row_h + FOOTER * s
     width = region.width - m["left"] - 30 * s
     top = region.view2d.view_to_region(0, 0, clip=False)[1] - HEADER_UNITS * m["unit"]
     x, y = m["left"], top - height
@@ -87,6 +110,10 @@ def draw_downloads():
     pad = 8 * s
     gpu.state.blend_set("ALPHA")
     gfx.rect(*card, (*colors["footer"][:3], 1))
+    if rows:
+        strip = gfx.lift((*colors["footer"][:3], 1), 0.05)  # the totals strip
+        gfx.rect(card[0], card[1], card[2], FOOTER * s, strip)
+        gfx.text(_footer(), card[0] + pad, card[1] + 7 * s, 10 * s, colors["button_text"], card[2] - 2 * pad)
     if not rows:
         gfx.text(
             "No downloads",
