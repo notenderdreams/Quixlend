@@ -64,7 +64,8 @@ def _main_label(asset_id, hit):
     if st.queue.queued(asset_id) or asset_id in st.restart:
         return "Queued"
     if asset_id in st.progress:
-        return f"{int(st.progress[asset_id] * 100)}%"
+        started = st.transferred.get(asset_id, (0, 0))[0] > 0  # until bytes arrive it is still resolving
+        return f"{int(st.progress[asset_id] * 100)}%" if started else "Downloading"
     if asset_id in st.local:
         if not has_selected(asset_id):
             return "Download"  # downloaded, but not at the chosen resolution

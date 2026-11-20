@@ -57,6 +57,8 @@ def _thumb(asset_id):
 def _note(asset_id):
     if asset_id in state.progress:
         done, total = state.transferred.get(asset_id, (0, 0))
+        if not done:
+            return "Downloading"  # still resolving, no bytes yet
         return f"{done / 1e6:.0f} / {total / 1e6:.0f} MB" if total else f"{state.progress[asset_id]:.0%}"
     return "Building" if asset_id in state.building else "Queued"
 
