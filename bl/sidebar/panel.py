@@ -63,12 +63,12 @@ class QUIXLEND_PT_browser(bpy.types.Panel):
         cat = row.row(align=True)
         cat.enabled = wm.quixlend_type not in ("ALL", "decal")
         cat.prop(wm, "quixlend_category", text="")
-        size = row.row(align=True)
-        size.scale_x = 0.6  # "4K" needs far less than a share of the row
-        size.prop(prefs(), "resolution", text="")
         row.prop(wm, "quixlend_downloaded", text="", icon="DISK_DRIVE")
         row = layout.row()
         row.label(text=state.status or "Browse the Megascans catalog", icon="ASSET_MANAGER")
+        size = row.row()
+        size.alignment = "RIGHT"
+        size.prop(prefs(), "resolution", text="")
 
         # The cards are drawn by sidebar.draw_grid into this reserved empty space.
         m = metrics(context.region)
