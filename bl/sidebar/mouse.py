@@ -80,8 +80,12 @@ class QUIXLEND_OT_card(bpy.types.Operator):
         asset_id, st = self.hit["id"], state
         if event.type == "MOUSEMOVE":
             moved = abs(event.mouse_x - self.start[0]) + abs(event.mouse_y - self.start[1])
+            # no drag from a card whose chosen resolution isn't downloaded: a click downloads it
             if pointer.drag or (
-                asset_id in st.local and self.zone not in ("res", "copy") and moved > 6 * gfx.scale()
+                asset_id in st.local
+                and has_selected(asset_id)
+                and self.zone not in ("res", "copy")
+                and moved > 6 * gfx.scale()
             ):
                 if not pointer.drag:
                     pointer.hover = None  # the pointer leaves the card: no hover preview when the drag ends
