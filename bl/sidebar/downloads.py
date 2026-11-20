@@ -1,11 +1,14 @@
 """The download list: a card drawn over the top of the grid, like the asset cards, so it redraws live as progress
 comes in. One row per asset being fetched, queued or built, each with a thin progress bar and a cancel button."""
 
+from typing import cast
+
 import blf
 import bpy
 import gpu
 
 from .. import catalog
+from ..search import thumb_image
 from ..store import Result, state
 from ..transfer import cancel_download
 from . import gfx
@@ -23,6 +26,11 @@ def _name(asset_id):
     return (hit or catalog.meta(asset_id) or {}).get("name") or asset_id
 
 
+def _thumb(asset_id):
+    hit = next((h for h in state.hits if h["id"] == asset_id), None)
+    return thumb_image(hit) if hit else bpy.data.images.get(f".quixlend_{asset_id}")
+
+
 def _note(asset_id):
     if asset_id in state.progress:
         done, total = state.transferred.get(asset_id, (0, 0))
@@ -33,7 +41,7 @@ def _note(asset_id):
 def geometry(region):
     """((x, y, w, h) of the card, [(asset_id, row rect, cancel rect or None)]) in region pixels."""
     s, m = gfx.scale(), metrics(region)
-    pad, row_h = 8 * s, 34 * s
+    pad, row_h = 8 * s, 46 * s
     ids = active_ids()
     height = 2 * pad + max(1, len(ids)) * row_h
     width = region.width - m["left"] - 30 * s
@@ -45,7 +53,7 @@ def geometry(region):
         cancel = (
             None
             if asset_id in state.building
-            else (x + width - pad - 18 * s, ry + row_h - 22 * s, 18 * s, 18 * s)
+            else (x + width - pad - 18 * s, ry + row_h - 24 * s, 18 * s, 18 * s)
         )
         rows.append((asset_id, (x + pad, ry, width - 2 * pad, row_h), cancel))
     return (x, y, width, height), rows
@@ -89,16 +97,25 @@ def draw_downloads():
             card[2] - 2 * pad,
         )
     for asset_id, (rx, ry, rw, rh), cancel in rows:
+        side = rh - 2 * 3 * s  # the thumbnail: a square filling the row
+        gfx.rect(rx, ry + 3 * s, side, side, (0, 0, 0, 1))
+        if image := _thumb(asset_id):
+            width, height = cast("tuple[int, int]", image.size)
+            fit = side / max(width, height, 1)
+            w, h = width * fit, height * fit
+            gfx.image(image, rx + (side - w) / 2, ry + 3 * s + (side - h) / 2, w, h)
+        tx = rx + side + 8 * s  # text and bar start right of it
+        tw = rx + rw - tx
         note = _note(asset_id)
         blf.size(0, 10 * s)
         note_w = blf.dimensions(0, note)[0]
         right = rx + rw - (24 * s if cancel else 0)
-        gfx.text(note, right - note_w, ry + rh - 17 * s, 10 * s, colors["button_text"], note_w + 1)
-        gfx.text(_name(asset_id), rx, ry + rh - 17 * s, 11 * s, colors["button_text"], rw - note_w - 36 * s)
+        gfx.text(note, right - note_w, ry + rh - 19 * s, 10 * s, colors["button_text"], note_w + 1)
+        gfx.text(_name(asset_id), tx, ry + rh - 19 * s, 11 * s, colors["button_text"], tw - note_w - 36 * s)
         if cancel:
             _draw_cancel(cancel, colors["button"], colors["button_text"], False)
-        gfx.rect(rx, ry + 6 * s, rw, 3 * s, colors["button"])  # the thin bar: track, then fill
-        gfx.rect(rx, ry + 6 * s, rw * state.progress.get(asset_id, 0.0), 3 * s, colors["accent"])
+        gfx.rect(tx, ry + 8 * s, tw, 3 * s, colors["button"])  # the thin bar: track, then fill
+        gfx.rect(tx, ry + 8 * s, tw * state.progress.get(asset_id, 0.0), 3 * s, colors["accent"])
     gpu.state.blend_set("NONE")
 
 
