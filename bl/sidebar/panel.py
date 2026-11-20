@@ -84,8 +84,6 @@ class QUIXLEND_PT_browser(bpy.types.Panel):
                 else "Search by name or choose an asset type."
             )
         if state.page + 1 < state.pages:
-            layout.label(text="Fetching more assets…", icon="SORTTIME")
-        if state.hits:
-            col = layout.column(align=True)
-            col.enabled = False
-            col.label(text="Click to download · Drag to place", icon="MOUSE_LMB")
+            row = layout.row()
+            row.alignment = "CENTER"
+            row.label(text="Fetching more assets…", icon="SORTTIME")
