@@ -94,6 +94,9 @@ def covers(region, px, py):
 def click(region, px, py):
     """True if the pointer is on the open card (cancelling a row if its X was hit), so the cards below ignore it."""
     if not covers(region, px, py):
+        if state.downloads_open and py < geometry(region)[0][1] + geometry(region)[0][3]:
+            state.downloads_open = False  # a click below the card's top edge closes it; the toggle sits above
+            region.tag_redraw()  # the click passes through, so nothing else redraws the region
         return False
     for asset_id, _, cancel in geometry(region)[1]:
         if _inside(cancel, px, py):
@@ -103,9 +106,12 @@ def click(region, px, py):
 
 def draw_downloads():
     region = bpy.context.region
-    if not state.downloads_open or not active(region) or not state.downloads_seen:
+    if not state.downloads_open or not active(region):
         return
-    state.downloads_seen = False  # set again by the panel on its next draw; stays off while it is collapsed
+    if not state.downloads_seen:  # the panel didn't draw since the last frame: it was collapsed, so close the card
+        state.downloads_open = False
+        return
+    state.downloads_seen = False  # set again by the panel on its next draw
     s, colors = gfx.scale(), gfx.colors()
     card, rows = geometry(region)
     pad = 8 * s
