@@ -136,6 +136,7 @@ class state:
         str, threading.Event
     ] = {}  # id -> threading.Event, present only while the network part can still be cancelled
     errors: dict[str, str] = {}  # id -> message
+    asset_res: dict[str, int] = {}  # id -> resolution picked on its card; the preference applies to the rest
     sizes: dict[tuple[str, int], int] = {}  # (id, resolution) -> download bytes
     categories: dict[
         str, list[tuple[str, int]]

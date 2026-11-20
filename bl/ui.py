@@ -14,7 +14,7 @@ from .details import QUIXLEND_OT_delete_resolution, QUIXLEND_OT_details
 from .library import ensure_asset_library, load_owned, scan_local
 from .placement import QUIXLEND_OT_copy_group
 from .search import QUIXLEND_OT_search, load_categories, start_search
-from .settings import QUIXLEND_OT_clean, QUIXLEND_PT_settings, QuixlendPreferences
+from .settings import QUIXLEND_OT_asset_res, QUIXLEND_OT_clean, QUIXLEND_PT_settings, QuixlendPreferences
 from .store import icons, layout_of, session, state, wm_of
 from .transfer import QUIXLEND_OT_download
 from .variation import QUIXLEND_OT_color_variation, QUIXLEND_PT_variation
@@ -30,6 +30,7 @@ CLASSES = (
     QUIXLEND_OT_logout,
     QUIXLEND_OT_copy_group,
     QUIXLEND_OT_clean,
+    QUIXLEND_OT_asset_res,
     QUIXLEND_PT_settings,
     QUIXLEND_OT_color_variation,
     QUIXLEND_PT_variation,

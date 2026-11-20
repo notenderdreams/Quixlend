@@ -69,7 +69,9 @@ class QUIXLEND_OT_details(bpy.types.Operator):
         rows: list[tuple[int | None, str, str]] = [(None, key, value) for key, value in self.info]
         rows[:0] = [(res, "Downloaded" if i == 0 else "", line) for i, (res, line) in enumerate(self.have)]
         if self.size:
-            rows.insert(0, (None, "Download size", f"{self.size / 1e6:,.0f} MB at {res_label()}"))
+            rows.insert(
+                0, (None, "Download size", f"{self.size / 1e6:,.0f} MB at {res_label(self.asset_id)}")
+            )
         for res, key, value in rows:
             row = col.split(factor=0.3)
             row.label(text=key)

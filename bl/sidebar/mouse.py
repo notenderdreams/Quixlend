@@ -13,7 +13,7 @@ from mathutils.geometry import intersect_line_plane
 from ...core import api
 from ..decal import orientation
 from ..details import open_details
-from ..library import built_at_selected, has_selected, stale_plane
+from ..library import built_at_selected, has_selected, res_of, stale_plane
 from ..placement import place
 from ..settings import draw_res_menu
 from ..store import Result, is_material, prefs, state
@@ -118,7 +118,7 @@ class QUIXLEND_OT_card(bpy.types.Operator):
             elif self.zone == "res" and asset_id in st.cancel:
                 cancel_download(asset_id)
             elif self.zone == "res":
-                context.window_manager.popup_menu(draw_res_menu, title="Texture Resolution")
+                context.window_manager.popup_menu(draw_res_menu(asset_id), title="Texture Resolution")
             elif self.zone == "main":
                 if asset_id in st.local and not has_selected(asset_id):
                     bpy.ops.quixlend.download(asset_id=asset_id)  # pyright: ignore[reportAttributeAccessIssue]
@@ -204,7 +204,7 @@ class QUIXLEND_OT_card(bpy.types.Operator):
         if built_at_selected(asset_id) and not stale_plane(hit):
             start()
         else:  # the textures of the chosen resolution are on disk but the asset still uses another: rebuild first
-            build_resolution(asset_id, int(prefs().resolution), start)
+            build_resolution(asset_id, res_of(asset_id), start)
 
     def import_at_cursor(self, context):
         """Import at the 3D cursor (materials go on the selected objects)."""

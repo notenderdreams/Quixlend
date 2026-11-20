@@ -6,7 +6,7 @@ import bpy
 import bpy.utils.previews
 
 from ..decal import draw_manager, editing
-from ..store import icons, layout_of, session, state, wm_of
+from ..store import icons, layout_of, prefs, session, state, wm_of
 from .downloads import active_ids
 from .layout import metrics
 
@@ -57,10 +57,15 @@ class QUIXLEND_PT_browser(bpy.types.Panel):
         row.prop(wm, "quixlend_query", text="", icon="VIEWZOOM", placeholder="Search Megascans")
         row.operator("quixlend.search", text="", icon="FILE_REFRESH")
         row = layout.row(align=True)
-        row.prop(wm, "quixlend_type", text="")
+        kind = row.row(align=True)
+        kind.scale_x = 0.7
+        kind.prop(wm, "quixlend_type", text="")
         cat = row.row(align=True)
         cat.enabled = wm.quixlend_type not in ("ALL", "decal")
         cat.prop(wm, "quixlend_category", text="")
+        size = row.row(align=True)
+        size.scale_x = 0.6  # "4K" needs far less than a share of the row
+        size.prop(prefs(), "resolution", text="")
         row.prop(wm, "quixlend_downloaded", text="", icon="DISK_DRIVE")
         row = layout.row()
         row.label(text=state.status or "Browse the Megascans catalog", icon="ASSET_MANAGER")

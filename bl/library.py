@@ -59,15 +59,20 @@ def have_resolution(asset_id, res):
     state.built.setdefault(asset_id, set()).add(res)
 
 
+def res_of(asset_id) -> int:
+    """Texture size for this asset: the one picked on its card, else the preference."""
+    return state.asset_res.get(asset_id) or int(prefs().resolution)
+
+
 def has_selected(asset_id):
     """The chosen texture size is on disk (or not scanned yet, in which case assume it is)."""
-    res = int(prefs().resolution)
+    res = res_of(asset_id)
     return res in state.resolutions.get(asset_id, {res})
 
 
 def built_at_selected(asset_id):
     """A .blend for the chosen texture size exists (or the asset is not scanned yet: assume so)."""
-    res = int(prefs().resolution)
+    res = res_of(asset_id)
     return res in state.built.get(asset_id, {res})
 
 
@@ -75,9 +80,7 @@ def stale_plane(hit):
     """An atlas whose .blend was built before atlases became planes and boxes: no object in it, or built by older code."""
     if hit.get("type") != "atlas":
         return False
-    path = next(
-        (library() / "Quixlend").glob(f"*/{hit['id']}/*_{int(prefs().resolution) // 1024}K.blend"), None
-    )
+    path = next((library() / "Quixlend").glob(f"*/{hit['id']}/*_{res_of(hit['id']) // 1024}K.blend"), None)
     if path is None:
         return False
     if path.stat().st_mtime < Path(build.__file__).stat().st_mtime:
@@ -88,7 +91,7 @@ def stale_plane(hit):
 
 def usable_resolution(asset_id) -> int | None:
     """Resolution whose .blend to load: the chosen one if built, else the largest built; None if unknown or none."""
-    res = int(prefs().resolution)
+    res = res_of(asset_id)
     built = state.built.get(asset_id)
     if built is None or res in built:
         return res

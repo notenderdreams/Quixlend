@@ -315,7 +315,7 @@ def draw_grid():
         elif res and asset_id in state.cancel:
             _draw_cancel(res, colors["button"], colors["button_text"], zone == "res")
         elif res:
-            label = res_label()
+            label = res_label(asset_id)
             if (
                 res[2] < (DROPDOWN + DROPDOWN_COMPACT) / 2 * s
             ):  # the compact button has room for the number only

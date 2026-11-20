@@ -2,24 +2,52 @@
 
 import shutil
 from pathlib import Path
-from typing import cast
+from typing import Any
 
 import bpy
 import bpy.utils.previews
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, StringProperty
 
 from . import jobs
-from .library import refresh_asset_browsers, scan_local
+from .library import refresh_asset_browsers, res_of, scan_local
 from .store import ADDON, Result, layout_of, library, prefs, session, state
 
 
-def res_label() -> str:
-    items = cast(bpy.types.EnumProperty, prefs().bl_rna.properties["resolution"]).enum_items
-    return items[prefs().resolution].name
+def reset_asset_res():
+    state.asset_res.clear()
+    jobs.redraw()
 
 
-def draw_res_menu(self: bpy.types.Menu, context: bpy.types.Context):
-    layout_of(self).prop(prefs(), "resolution", expand=True)
+def res_label(asset_id) -> str:
+    return f"{res_of(asset_id) // 1024}K"
+
+
+class QUIXLEND_OT_asset_res(bpy.types.Operator):
+    bl_idname = "quixlend.asset_res"
+    bl_label = "Texture Resolution"
+    bl_description = "Texture size for this asset only"
+    bl_options = {"INTERNAL"}
+
+    asset_id: StringProperty()  # pyright: ignore[reportInvalidTypeForm]
+    res: IntProperty()  # pyright: ignore[reportInvalidTypeForm]
+
+    def execute(self, context: bpy.types.Context) -> Result:
+        state.asset_res[self.asset_id] = self.res
+        jobs.redraw()
+        return {"FINISHED"}
+
+
+def draw_res_menu(asset_id):
+    """Menu body for one card: picking a size changes that asset only."""
+
+    def draw(menu: bpy.types.Menu, context: bpy.types.Context):
+        for res in (1024, 2048, 4096, 8192):
+            op: Any = layout_of(menu).operator(
+                "quixlend.asset_res", text=f"{res // 1024}K", depress=res == res_of(asset_id)
+            )
+            op.asset_id, op.res = asset_id, res
+
+    return draw
 
 
 class QUIXLEND_OT_clean(bpy.types.Operator):
@@ -78,6 +106,8 @@ class QuixlendPreferences(bpy.types.AddonPreferences):
         name="Texture Resolution",
         default="4096",
         items=[("1024", "1K", ""), ("2048", "2K", ""), ("4096", "4K", ""), ("8192", "8K", "")],
+        description="Texture size for every asset; sizes picked on individual cards are reset",
+        update=lambda self, context: reset_asset_res(),
     )
     max_columns: IntProperty(  # pyright: ignore[reportInvalidTypeForm]
         name="Max Columns",
@@ -129,7 +159,6 @@ class QuixlendPreferences(bpy.types.AddonPreferences):
     def draw(self, context: bpy.types.Context):
         layout = layout_of(self)
         layout.prop(self, "library")
-        layout.prop(self, "resolution")
         layout.prop(self, "fetch_sizes")
         layout.prop(self, "max_columns")
         layout.prop(self, "simultaneous_downloads")
@@ -155,7 +184,6 @@ class QUIXLEND_PT_settings(bpy.types.Panel):
         layout.use_property_decorate = False
         layout.label(text="Asset Library", icon="ASSET_MANAGER")
         layout.prop(prefs(), "library")
-        layout.prop(prefs(), "resolution")
         layout.prop(prefs(), "fetch_sizes")
         layout.prop(prefs(), "max_columns")
         layout.prop(prefs(), "simultaneous_downloads")

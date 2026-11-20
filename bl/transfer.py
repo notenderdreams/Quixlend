@@ -12,7 +12,7 @@ from bpy.props import StringProperty
 
 from ..core import api, download
 from . import jobs
-from .library import have_resolution, measure_library, refresh_asset_browsers
+from .library import have_resolution, measure_library, refresh_asset_browsers, res_of
 from .store import HOME, Result, client, library, prefs, state
 
 BUILD_SCRIPT = str(Path(__file__).with_name("build.py"))
@@ -37,7 +37,7 @@ def download_size(asset_id, fetch=True):
     asset = state.assets.get(asset_id)
     if not asset:
         return None
-    key = (asset_id, int(prefs().resolution))
+    key = (asset_id, res_of(asset_id))
     if key not in state.sizes:
         state.sizes[key] = api.payload_size(asset, api.build_payload(asset, key[1]))
     return state.sizes[key]
@@ -57,7 +57,7 @@ class QUIXLEND_OT_download(bpy.types.Operator):
             state.restart.add(asset_id)  # the old worker still owns the files: start once it is gone
             jobs.redraw()
             return {"FINISHED"}
-        resolution, blender = int(prefs().resolution), bpy.app.binary_path
+        resolution, blender = res_of(asset_id), bpy.app.binary_path
         anti_tiling = prefs().anti_tiling
         state.progress[asset_id] = 0.0
         state.errors.pop(asset_id, None)
