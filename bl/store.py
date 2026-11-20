@@ -111,6 +111,7 @@ class state:
     back: str | None = None  # decal box the user left the manager for, until another object is active
     downloads_open = False  # the download card is showing
     panel_open = False  # set by the panel each time it draws; tells the grid overlay to draw
+    downloads_seen = False  # the same, for the download card, which draws after the grid
     seq = 0  # id of the latest search
     page = 0
     pages = 0

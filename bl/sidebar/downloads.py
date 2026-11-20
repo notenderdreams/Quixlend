@@ -103,8 +103,9 @@ def click(region, px, py):
 
 def draw_downloads():
     region = bpy.context.region
-    if not state.downloads_open or not active(region):
+    if not state.downloads_open or not active(region) or not state.downloads_seen:
         return
+    state.downloads_seen = False  # set again by the panel on its next draw; stays off while it is collapsed
     s, colors = gfx.scale(), gfx.colors()
     card, rows = geometry(region)
     pad = 8 * s

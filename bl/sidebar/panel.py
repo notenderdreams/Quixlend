@@ -71,6 +71,7 @@ class QUIXLEND_PT_browser(bpy.types.Panel):
         for _ in range(math.ceil(m["height"] / m["unit"])):
             blank.label(text="")
         state.panel_open = True
+        state.downloads_seen = True
         if not state.hits:
             box = layout.box()
             box.label(
